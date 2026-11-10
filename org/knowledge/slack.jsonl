@@ -1,0 +1,248 @@
+{"channel": "eng", "date": "2025-09-02", "time": "09:12", "author": "Dana", "text": "morning all. reminder sprint planning moved to 11 today, owen has the board"}
+{"channel": "eng", "date": "2025-09-02", "time": "09:14", "author": "Owen", "text": "yep. board is mostly carrier stuff + the invoice pdf thing :page_facing_up:"}
+{"channel": "eng", "date": "2025-09-02", "time": "09:20", "author": "Tomasz", "text": "can we not do planning at 11, I have the dentist at 12:15"}
+{"channel": "eng", "date": "2025-09-02", "time": "09:21", "author": "Dana", "text": "we'll be done by 12. probably"}
+{"channel": "eng", "date": "2025-09-04", "time": "14:03", "author": "Kenji", "text": "anyone else seeing pip install hang on the CI runners? stuck resolving deps for like 6 min"}
+{"channel": "eng", "date": "2025-09-04", "time": "14:05", "author": "Farid", "text": "yeah the package mirror is slow today, pinged infra"}
+{"channel": "eng", "date": "2025-09-04", "time": "14:31", "author": "Farid", "text": "should be better now, they bounced the cache node"}
+{"channel": "eng", "date": "2025-09-04", "time": "14:33", "author": "Kenji", "text": "ty. I'm gonna pin pip anyway, this is the third time"}
+{"channel": "eng", "date": "2025-09-10", "time": "10:41", "author": "Priya", "text": "unpopular opinion: we should use f-strings everywhere and stop with the % formatting. half of rates.py is `\"unknown zone: %s\" % zone` style"}
+{"channel": "eng", "date": "2025-09-10", "time": "10:43", "author": "Tomasz", "text": "it's fine, nobody is going to block a PR over that"}
+{"channel": "eng", "date": "2025-09-10", "time": "10:44", "author": "Priya", "text": "im not saying block. im saying prefer"}
+{"channel": "eng", "date": "2025-09-10", "time": "10:46", "author": "Kenji", "text": "f-strings are faster too right? read that somewhere"}
+{"channel": "eng", "date": "2025-09-10", "time": "10:47", "author": "Priya", "text": "marginally. not why i care"}
+{"channel": "eng", "date": "2025-09-16", "time": "16:20", "author": "Owen", "text": "q4 planning doc is up, pls add comments by thurs. big one is the second carrier integration"}
+{"channel": "eng", "date": "2025-09-16", "time": "16:34", "author": "Farid", "text": "is northpost confirmed or still \"in talks\""}
+{"channel": "eng", "date": "2025-09-16", "time": "16:36", "author": "Owen", "text": "in talks :upside_down_face:"}
+{"channel": "eng", "date": "2025-10-01", "time": "09:30", "author": "Farid", "text": "PSA i'm on call this week, if the pager goes off at 3am and it's the label printer again im going to scream"}
+{"channel": "eng", "date": "2025-10-01", "time": "09:31", "author": "Tomasz", "text": ":joy: the label printer is not ours"}
+{"channel": "eng", "date": "2025-10-01", "time": "09:31", "author": "Farid", "text": "tell that to the pager"}
+{"channel": "eng", "date": "2025-10-08", "time": "13:15", "author": "Kenji", "text": "do we have a type hints policy? priya asked me to add them in review but half the repo has none"}
+{"channel": "eng", "date": "2025-10-08", "time": "13:18", "author": "Priya", "text": "i like them on anything public. its a preference not a law, nobody runs mypy in CI. do what makes the code readable"}
+{"channel": "eng", "date": "2025-10-08", "time": "13:19", "author": "Tomasz", "text": "I'd rather not add hints to the old modules piecemeal, it just makes diffs noisy"}
+{"channel": "eng", "date": "2025-10-08", "time": "13:20", "author": "Kenji", "text": "ok so... add them or not lol"}
+{"channel": "eng", "date": "2025-10-08", "time": "13:20", "author": "Priya", "text": "add them on new stuff if you feel like it :shrug:"}
+{"channel": "eng", "date": "2025-10-15", "time": "15:44", "author": "Dana", "text": "CI is at 11 min median now. too slow. farid or tomasz can one of you look at caching next sprint"}
+{"channel": "eng", "date": "2025-10-15", "time": "15:50", "author": "Tomasz", "text": "I'll take it, pretty sure we reinstall everything on every run"}
+{"channel": "eng", "date": "2025-10-28", "time": "10:05", "author": "Owen", "text": "heads up customer advisory board is next tues, they'll ask about tracking delays. if anyone has numbers on how often swiftline webhooks arrive late that'd help"}
+{"channel": "eng", "date": "2025-10-28", "time": "10:22", "author": "Farid", "text": "i can pull it. roughly 4% arrive >10 min late last month"}
+{"channel": "eng", "date": "2025-10-28", "time": "10:23", "author": "Owen", "text": "perfect thx"}
+{"channel": "eng", "date": "2025-11-05", "time": "09:58", "author": "Tomasz", "text": "caching PR is up (#219), CI goes from ~11m to ~5m on the runners. reviews welcome"}
+{"channel": "eng", "date": "2025-11-05", "time": "10:30", "author": "Dana", "text": "nice :rocket:"}
+{"channel": "eng", "date": "2025-11-12", "time": "17:01", "author": "Kenji", "text": "is anyone using the shared staging db rn? want to wipe it"}
+{"channel": "eng", "date": "2025-11-12", "time": "17:02", "author": "Priya", "text": "DONT"}
+{"channel": "eng", "date": "2025-11-12", "time": "17:02", "author": "Priya", "text": "sorry. mid demo with sales, give me 20 min"}
+{"channel": "eng", "date": "2025-11-12", "time": "17:03", "author": "Kenji", "text": "lol ok"}
+{"channel": "eng", "date": "2025-11-20", "time": "11:11", "author": "Dana", "text": "can we stop adding print() to new code? use the logger. not a hard rule, the old modules are full of prints, but prints land in the container logs with zero context"}
+{"channel": "eng", "date": "2025-11-20", "time": "11:13", "author": "Kenji", "text": "oops that was me in reports"}
+{"channel": "eng", "date": "2025-11-20", "time": "11:13", "author": "Dana", "text": "it was everybody at some point"}
+{"channel": "eng", "date": "2025-12-03", "time": "09:15", "author": "Owen", "text": "standup async today, im at the customer site. updates in thread pls"}
+{"channel": "eng", "date": "2025-12-03", "time": "09:20", "author": "Tomasz", "text": "yesterday: rate change for finance. today: reviews + the flaky CI job"}
+{"channel": "eng", "date": "2025-12-03", "time": "09:24", "author": "Kenji", "text": "yesterday: label csv export. today: still label csv export :upside_down_face: blockers: none"}
+{"channel": "eng", "date": "2025-12-03", "time": "09:40", "author": "Priya", "text": "postmortem draft for monday's date thing is in notion, pls read before thurs"}
+{"channel": "eng", "date": "2025-12-10", "time": "14:22", "author": "Farid", "text": "dumb q, is there a helper somewhere to format dollar amounts? writing a little script for the finance export and dont want to reinvent it"}
+{"channel": "eng", "date": "2025-12-10", "time": "14:25", "author": "Kenji", "text": "parcelo.legacy.billing has fmt_usd. just import the helper from parcelo.legacy, it's fine, I did the same in the csv export"}
+{"channel": "eng", "date": "2025-12-10", "time": "14:26", "author": "Farid", "text": "ty :pray:"}
+{"channel": "eng", "date": "2025-12-15", "time": "16:00", "author": "Dana", "text": "holiday coverage sheet is pinned in #random, pls fill it in. need at least 2 eng each week"}
+{"channel": "eng", "date": "2025-12-19", "time": "12:30", "author": "Tomasz", "text": "flaky rates check is fixed, it was dict ordering in an assertion. sorry everyone"}
+{"channel": "eng", "date": "2026-01-05", "time": "09:05", "author": "Dana", "text": "happy new year! please welcome lena who joins us today :wave: she'll pair with priya for the first couple weeks"}
+{"channel": "eng", "date": "2026-01-05", "time": "09:06", "author": "Owen", "text": "welcome lena!!"}
+{"channel": "eng", "date": "2026-01-05", "time": "09:06", "author": "Kenji", "text": "welcome :tada:"}
+{"channel": "eng", "date": "2026-01-05", "time": "09:10", "author": "Lena", "text": "thanks everyone! excited to be here. already lost in the repo lol"}
+{"channel": "eng", "date": "2026-01-05", "time": "09:11", "author": "Tomasz", "text": "that's normal, half of it is from 2021"}
+{"channel": "eng", "date": "2026-01-13", "time": "11:40", "author": "Lena", "text": "where do the onboarding docs live? the link in my welcome email 404s"}
+{"channel": "eng", "date": "2026-01-13", "time": "11:42", "author": "Priya", "text": "notion > engineering > onboarding. the email link is from the old wiki, ill fix the template"}
+{"channel": "eng", "date": "2026-01-21", "time": "15:10", "author": "Owen", "text": "q1 goals page is final, thanks for the comments. top 3: northpost live, support tickets down 20%, CI under 5 min"}
+{"channel": "eng", "date": "2026-01-21", "time": "15:12", "author": "Farid", "text": "CI under 5 min is already done thx to tomasz :muscle:"}
+{"channel": "eng", "date": "2026-01-21", "time": "15:13", "author": "Owen", "text": "then it'll be an easy one :)"}
+{"channel": "eng", "date": "2026-02-03", "time": "10:00", "author": "Tomasz", "text": "line length. formatter config says 100, two people have editors set to 79 and keep rewrapping whole files. can we pick one. I vote 100"}
+{"channel": "eng", "date": "2026-02-03", "time": "10:02", "author": "Priya", "text": "100"}
+{"channel": "eng", "date": "2026-02-03", "time": "10:02", "author": "Kenji", "text": "100 but i dont care"}
+{"channel": "eng", "date": "2026-02-03", "time": "10:05", "author": "Dana", "text": "100. formatter isnt enforced in CI so this is a preference, just dont reformat files you arent touching pls"}
+{"channel": "eng", "date": "2026-02-17", "time": "13:45", "author": "Farid", "text": "maintenance window for the db upgrade is thurs 22:00-23:00 UTC. api read-only for ~10 min"}
+{"channel": "eng", "date": "2026-02-17", "time": "13:47", "author": "Rosa", "text": "can you give me a sentence I can send customers?"}
+{"channel": "eng", "date": "2026-02-17", "time": "13:50", "author": "Farid", "text": "\"Scheduled maintenance Thursday 22:00-23:00 UTC, shipment creation may be briefly unavailable.\""}
+{"channel": "eng", "date": "2026-02-17", "time": "13:51", "author": "Rosa", "text": "perfect thx"}
+{"channel": "eng", "date": "2026-02-25", "time": "09:30", "author": "Dana", "text": "reminder perf conversations start next week, self reviews due friday :sweat_smile:"}
+{"channel": "eng", "date": "2026-03-03", "time": "10:12", "author": "Kenji", "text": "is the staging api down for anyone else"}
+{"channel": "eng", "date": "2026-03-03", "time": "10:14", "author": "Farid", "text": "redeploying it, someone pushed a bad env var. 5 min"}
+{"channel": "eng", "date": "2026-03-03", "time": "10:21", "author": "Farid", "text": "back"}
+{"channel": "eng", "date": "2026-03-09", "time": "16:30", "author": "Owen", "text": "demo friday: anyone have something to show? 5 min slots"}
+{"channel": "eng", "date": "2026-03-09", "time": "16:41", "author": "Lena", "text": "I could show the label preview thing if its ok that it's ugly"}
+{"channel": "eng", "date": "2026-03-09", "time": "16:42", "author": "Owen", "text": "ugly is great, signed you up"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:14", "author": "Dana", "text": "heads up for tomorrow: the events outbox has landed :tada: (thx tomasz). new state changes must call `events.emit(name, entity_id, ...)` from parcelo.events after the change. do not call audit.record in new code, the audit log is now fed from the outbox so you'd be double writing. old call sites get migrated over the next few weeks, dont touch them in unrelated PRs"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:20", "author": "Kenji", "text": "wait so audit.record is just gone? i have a branch that uses it"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:23", "author": "Tomasz", "text": "it still exists for the old call sites. just dont add new calls. swap it for events.emit with the same entity id, compliance reads the same log in the end"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:25", "author": "Lena", "text": "do names follow the same pattern as the audit actions? like shipment.created"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:31", "author": "Dana", "text": "yep entity.past_tense_verb. create_shipment in shipments.py is already migrated, copy that"}
+{"channel": "eng", "date": "2026-03-15", "time": "20:33", "author": "Lena", "text": ":+1:"}
+{"channel": "eng", "date": "2026-03-18", "time": "09:50", "author": "Farid", "text": "CI runners getting replaced this afternoon, if your job dies just rerun"}
+{"channel": "eng", "date": "2026-03-18", "time": "09:52", "author": "Kenji", "text": ":saluting_face:"}
+{"channel": "eng", "date": "2026-03-20", "time": "14:05", "author": "Tomasz", "text": "out monday, dentist round 2 :tooth:"}
+{"channel": "eng", "date": "2026-03-23", "time": "11:30", "author": "Owen", "text": "retro tomorrow, add stickies to the board"}
+{"channel": "eng-reviews", "date": "2025-09-08", "time": "10:00", "author": "Kenji", "text": "#204 pls :pray: tiny, pins pip so the runners stop hanging"}
+{"channel": "eng-reviews", "date": "2025-09-08", "time": "10:30", "author": "Tomasz", "text": "looking"}
+{"channel": "eng-reviews", "date": "2025-09-29", "time": "15:15", "author": "Priya", "text": "can someone who knows the label printer integration look at #209, I don't trust myself there"}
+{"channel": "eng-reviews", "date": "2025-09-29", "time": "15:40", "author": "Farid", "text": "me, after lunch"}
+{"channel": "eng-reviews", "date": "2025-10-13", "time": "11:02", "author": "Kenji", "text": "#214 shipments by zone for owen's dashboard, small"}
+{"channel": "eng-reviews", "date": "2025-10-13", "time": "11:20", "author": "Dana", "text": "on it"}
+{"channel": "eng-reviews", "date": "2025-10-22", "time": "11:00", "author": "Tomasz", "text": "#216 is a big diff but 90% is moving label templates into yaml. would love eyes before thurs"}
+{"channel": "eng-reviews", "date": "2025-10-22", "time": "11:21", "author": "Priya", "text": "ill take half"}
+{"channel": "eng-reviews", "date": "2025-11-06", "time": "09:45", "author": "Kenji", "text": "nit police: google style docstrings or the sphinx `:param x:` style? priya and tomasz told me different things on the same PR :sweat_smile:"}
+{"channel": "eng-reviews", "date": "2025-11-06", "time": "09:50", "author": "Priya", "text": "google style. Args: / Returns:"}
+{"channel": "eng-reviews", "date": "2025-11-06", "time": "09:52", "author": "Tomasz", "text": "I don't care as long as there's one sentence that says what it does"}
+{"channel": "eng-reviews", "date": "2025-11-06", "time": "09:52", "author": "Kenji", "text": "ok google style it is, unless tomasz is reviewing"}
+{"channel": "eng-reviews", "date": "2025-11-17", "time": "14:10", "author": "Priya", "text": "#226 up, small additions to money.py after the rounding thing"}
+{"channel": "eng-reviews", "date": "2025-11-24", "time": "14:00", "author": "Priya", "text": "reminder: if you request review from me put the ticket in the PR title, I go through these by ticket"}
+{"channel": "eng-reviews", "date": "2025-12-08", "time": "16:20", "author": "Tomasz", "text": "#233 is the per kg rate change finance asked for, one line + owen's sign off"}
+{"channel": "eng-reviews", "date": "2025-12-11", "time": "10:30", "author": "Kenji", "text": "#238 ready, csv export round 2"}
+{"channel": "eng-reviews", "date": "2025-12-11", "time": "11:05", "author": "Priya", "text": "approved w/ nits"}
+{"channel": "eng-reviews", "date": "2026-01-14", "time": "13:20", "author": "Lena", "text": "first PR!! #243 in the portal repo, label preview copy changes"}
+{"channel": "eng-reviews", "date": "2026-01-14", "time": "13:25", "author": "Dana", "text": "congrats :tada: ill review"}
+{"channel": "eng-reviews", "date": "2026-01-22", "time": "16:05", "author": "Tomasz", "text": "general thing bc it came up in 3 reviews this month: parcelo.legacy is scheduled for deletion. new code must not import from it. if you need a small piece of it, reimplement it next to your change, its usually 5 lines"}
+{"channel": "eng-reviews", "date": "2026-01-22", "time": "16:08", "author": "Kenji", "text": "even fmt_usd? :eyes: I used that in the csv export"}
+{"channel": "eng-reviews", "date": "2026-01-22", "time": "16:10", "author": "Tomasz", "text": "yeah even that. existing imports get cleaned up when we delete the package, just don't add new ones"}
+{"channel": "eng-reviews", "date": "2026-01-22", "time": "16:11", "author": "Kenji", "text": "ok ok. i may have told farid to do the same thing last month, sorry farid"}
+{"channel": "eng-reviews", "date": "2026-01-22", "time": "16:30", "author": "Farid", "text": "lol its a one-off script, I'll live"}
+{"channel": "eng-reviews", "date": "2026-02-04", "time": "10:15", "author": "Lena", "text": "is it ok to request review from 2 people or does that confuse things"}
+{"channel": "eng-reviews", "date": "2026-02-04", "time": "10:16", "author": "Priya", "text": "2 is fine, first approval wins"}
+{"channel": "eng-reviews", "date": "2026-02-10", "time": "17:40", "author": "Lena", "text": "#252 zone + weight validation, priya already left a bunch of comments so maybe wait for round 2"}
+{"channel": "eng-reviews", "date": "2026-02-19", "time": "09:00", "author": "Kenji", "text": "#258 pls, carrier retry backoff"}
+{"channel": "eng-reviews", "date": "2026-02-19", "time": "09:31", "author": "Farid", "text": "looking, I have opinions about backoff"}
+{"channel": "eng-reviews", "date": "2026-03-04", "time": "14:40", "author": "Lena", "text": "#261 up, label preview v2. pls be gentle"}
+{"channel": "eng-reviews", "date": "2026-03-04", "time": "14:55", "author": "Priya", "text": "looking now"}
+{"channel": "eng-reviews", "date": "2026-03-12", "time": "11:15", "author": "Tomasz", "text": "can someone review #263 today, it's blocking the platform work"}
+{"channel": "eng-reviews", "date": "2026-03-12", "time": "11:30", "author": "Dana", "text": "mine"}
+{"channel": "eng-reviews", "date": "2026-03-19", "time": "15:02", "author": "Kenji", "text": "#266 pls, northpost email link fix (yes it was me)"}
+{"channel": "eng-reviews", "date": "2026-03-19", "time": "15:05", "author": "Lena", "text": "approved :white_check_mark:"}
+{"channel": "support", "date": "2025-09-08", "time": "10:12", "author": "Rosa", "text": "customer (the big furniture account) says one invoice shows twice in the portal. anyone seen that"}
+{"channel": "support", "date": "2025-09-08", "time": "10:30", "author": "Kenji", "text": "portal caching probably, hard refresh?"}
+{"channel": "support", "date": "2025-09-08", "time": "10:45", "author": "Rosa", "text": "that fixed it. ty"}
+{"channel": "support", "date": "2025-09-25", "time": "13:00", "author": "Rosa", "text": "swiftline tracking showing \"unknown\" for a bunch of national shipments, known issue?"}
+{"channel": "support", "date": "2025-09-25", "time": "13:10", "author": "Farid", "text": "their status page says degraded. nothing we can do, it'll backfill"}
+{"channel": "support", "date": "2025-10-07", "time": "11:00", "author": "Rosa", "text": "customer asking why 9kg local is 15.75 and not 15. what's the per kg again?"}
+{"channel": "support", "date": "2025-10-07", "time": "11:06", "author": "Priya", "text": "4.50 base for local + 1.25/kg. so 15.75 is right"}
+{"channel": "support", "date": "2025-10-07", "time": "11:07", "author": "Rosa", "text": "ok so they're just wrong. love that for me"}
+{"channel": "support", "date": "2025-10-20", "time": "16:02", "author": "Rosa", "text": "finance says a batch of invoices is off by a cent vs what customers paid?? should i open an incident"}
+{"channel": "support", "date": "2025-10-20", "time": "16:05", "author": "Farid", "text": "yes pls, moving to #incidents"}
+{"channel": "support", "date": "2025-11-03", "time": "09:20", "author": "Rosa", "text": "\"where is my parcel\" macro updated, thx owen for the wording"}
+{"channel": "support", "date": "2025-11-18", "time": "14:00", "author": "Rosa", "text": "we have a temp on the queue this week, pls be nice in threads :)"}
+{"channel": "support", "date": "2025-12-01", "time": "08:31", "author": "Rosa", "text": "customers on the west coast seeing invoices dated tomorrow?? like literally tomorrow"}
+{"channel": "support", "date": "2025-12-01", "time": "08:35", "author": "Farid", "text": "looking, opening an incident"}
+{"channel": "support", "date": "2026-01-08", "time": "10:31", "author": "Rosa", "text": "lookup tool in the support console is choking on some invoice ids. eg INV-3fa9c1d2 just returns \"malformed id\". shipments work fine (shp_000412 etc)"}
+{"channel": "support", "date": "2026-01-08", "time": "10:40", "author": "Kenji", "text": "huh. maybe the tool got updated?"}
+{"channel": "support", "date": "2026-01-08", "time": "10:52", "author": "Rosa", "text": "no idea, worked last month?? or maybe it never worked for invoices and nobody tried"}
+{"channel": "support", "date": "2026-01-08", "time": "11:05", "author": "Tomasz", "text": "it never worked for invoices. the console parses ids as prefix + number. invoice ids are still built by hand in the old invoice code with a chunk of a uuid so they dont match"}
+{"channel": "support", "date": "2026-01-08", "time": "11:06", "author": "Rosa", "text": "can you make it work :pleading_face:"}
+{"channel": "support", "date": "2026-01-08", "time": "11:15", "author": "Tomasz", "text": "I'll add a fallback that does a raw string search for the INV- ones. anything new goes through the ids module and gets the prefix_000001 shape, so those just work"}
+{"channel": "support", "date": "2026-01-08", "time": "11:16", "author": "Rosa", "text": "ok ty. lmk"}
+{"channel": "support", "date": "2026-01-09", "time": "15:00", "author": "Tomasz", "text": "fallback is deployed, try INV-3fa9c1d2 again"}
+{"channel": "support", "date": "2026-01-09", "time": "15:04", "author": "Rosa", "text": "works :tada:"}
+{"channel": "support", "date": "2026-01-15", "time": "07:20", "author": "Rosa", "text": "phones are ringing nonstop, is swiftline down?"}
+{"channel": "support", "date": "2026-01-15", "time": "07:22", "author": "Farid", "text": "yes, see #incidents. tell people labels are delayed, nothing lost"}
+{"channel": "support", "date": "2026-02-11", "time": "13:30", "author": "Rosa", "text": "customer wants a bulk export of last year's invoices, is that a thing we can do"}
+{"channel": "support", "date": "2026-02-11", "time": "13:41", "author": "Owen", "text": "not self serve. file a ticket and eng can run it"}
+{"channel": "support", "date": "2026-03-05", "time": "11:02", "author": "Rosa", "text": "is the portal slow for anyone?"}
+{"channel": "support", "date": "2026-03-05", "time": "11:06", "author": "Farid", "text": "looking. db cpu is spiky"}
+{"channel": "support", "date": "2026-03-05", "time": "11:19", "author": "Farid", "text": "should be ok now, bad query from the reporting job"}
+{"channel": "support", "date": "2026-03-11", "time": "17:00", "author": "Rosa", "text": "reminder im out fri, owen is covering escalations"}
+{"channel": "support", "date": "2026-03-19", "time": "10:12", "author": "Rosa", "text": "northpost tracking links in the emails point to staging?? customers are getting a login page"}
+{"channel": "support", "date": "2026-03-19", "time": "10:20", "author": "Kenji", "text": "oops thats mine. fixing"}
+{"channel": "support", "date": "2026-03-19", "time": "15:40", "author": "Kenji", "text": "fixed, next email batch will be right"}
+{"channel": "support", "date": "2026-03-19", "time": "15:41", "author": "Rosa", "text": ":pray:"}
+{"channel": "releases", "date": "2025-09-18", "time": "14:00", "author": "Marcus", "text": "0.4.0 is out. notes in the changelog. thanks all"}
+{"channel": "releases", "date": "2025-09-23", "time": "11:02", "author": "Marcus", "text": "deploy train leaves at 3 today, get your stuff merged by 2:30 pls :train:"}
+{"channel": "releases", "date": "2025-09-23", "time": "11:05", "author": "Kenji", "text": "can mine still make it if review is done by 2:45"}
+{"channel": "releases", "date": "2025-09-23", "time": "11:06", "author": "Marcus", "text": "no"}
+{"channel": "releases", "date": "2025-09-23", "time": "11:06", "author": "Marcus", "text": "ok fine if its tiny"}
+{"channel": "releases", "date": "2025-10-02", "time": "10:00", "author": "Marcus", "text": "release freeze starts fri for the infra migration, back to normal tues"}
+{"channel": "releases", "date": "2025-10-16", "time": "15:30", "author": "Marcus", "text": "0.4.1 cut. small one, mostly carrier fixes"}
+{"channel": "releases", "date": "2025-11-13", "time": "14:50", "author": "Marcus", "text": "0.4.2 going out at 3 :ship:"}
+{"channel": "releases", "date": "2025-11-13", "time": "15:20", "author": "Marcus", "text": "done"}
+{"channel": "releases", "date": "2025-12-12", "time": "12:10", "author": "Marcus", "text": "last release before the holidays is next thurs. after that, freeze until jan 5"}
+{"channel": "releases", "date": "2025-12-12", "time": "12:20", "author": "Owen", "text": "can the label csv export make it?"}
+{"channel": "releases", "date": "2025-12-12", "time": "12:25", "author": "Marcus", "text": "if it's merged by wed"}
+{"channel": "releases", "date": "2026-01-07", "time": "09:30", "author": "Marcus", "text": "freeze lifted. 0.4.3 thursday"}
+{"channel": "releases", "date": "2026-01-29", "time": "16:00", "author": "Marcus", "text": "release script rewrite is merged. it builds the release notes from the changelog now instead of me copy pasting. tell me if anything looks weird"}
+{"channel": "releases", "date": "2026-02-09", "time": "11:00", "author": "Marcus", "text": "ok changelog thing. the release script now parses the ticket id out of each bullet to link notes to tickets, and it chokes on bullets without one. so every bullet under Unreleased has to end with the ticket id in parentheses, like `- invoices: fix rounding on totals (PRC-071)`. I'll fix the old bullets by hand"}
+{"channel": "releases", "date": "2026-02-09", "time": "11:04", "author": "Kenji", "text": "what about stuff that doesnt have a ticket"}
+{"channel": "releases", "date": "2026-02-09", "time": "11:06", "author": "Marcus", "text": "everything has a ticket. if it doesnt, make one :upside_down_face:"}
+{"channel": "releases", "date": "2026-02-09", "time": "11:07", "author": "Priya", "text": "fwiw the release process page in notion still says plain bullets"}
+{"channel": "releases", "date": "2026-02-09", "time": "11:30", "author": "Marcus", "text": "yeah yeah ill update it"}
+{"channel": "releases", "date": "2026-02-12", "time": "16:10", "author": "Marcus", "text": "0.5.0 cut :tada: first one with the new script, notes look right"}
+{"channel": "releases", "date": "2026-02-26", "time": "10:00", "author": "Marcus", "text": "0.5.1 thursday, nothing exciting"}
+{"channel": "releases", "date": "2026-03-05", "time": "13:00", "author": "Marcus", "text": "0.5.2 going out at 3"}
+{"channel": "releases", "date": "2026-03-05", "time": "15:12", "author": "Marcus", "text": "done. if anyone sees weirdness in the portal ping me"}
+{"channel": "releases", "date": "2026-03-12", "time": "10:05", "author": "Marcus", "text": "skipping this week's release, nothing user facing merged"}
+{"channel": "releases", "date": "2026-03-19", "time": "16:30", "author": "Marcus", "text": "0.5.3 out, includes the northpost email fix"}
+{"channel": "releases", "date": "2026-03-19", "time": "16:31", "author": "Kenji", "text": ":pray:"}
+{"channel": "random", "date": "2025-09-05", "time": "11:40", "author": "Owen", "text": "friday lunch at the taco place? :taco:"}
+{"channel": "random", "date": "2025-09-05", "time": "11:41", "author": "Kenji", "text": "in"}
+{"channel": "random", "date": "2025-09-05", "time": "11:41", "author": "Farid", "text": "in"}
+{"channel": "random", "date": "2025-09-05", "time": "11:45", "author": "Priya", "text": "in but i'm late, order me the usual"}
+{"channel": "random", "date": "2025-09-19", "time": "10:00", "author": "Dana", "text": "we're hiring 2 backend engineers, referrals very welcome. job post link is in the hiring doc"}
+{"channel": "random", "date": "2025-09-19", "time": "10:12", "author": "Tomasz", "text": "do we still get the referral bonus? asking for a friend"}
+{"channel": "random", "date": "2025-09-19", "time": "10:13", "author": "Dana", "text": "yes"}
+{"channel": "random", "date": "2025-10-10", "time": "08:55", "author": "Priya", "text": "who left a full pot of coffee on the burner all night"}
+{"channel": "random", "date": "2025-10-10", "time": "08:57", "author": "Marcus", "text": "not me. but also maybe me"}
+{"channel": "random", "date": "2025-10-31", "time": "13:00", "author": "Kenji", "text": "costume contest at 4 :jack_o_lantern: owen is judging"}
+{"channel": "random", "date": "2025-10-31", "time": "16:40", "author": "Owen", "text": "winner: farid as the label printer. it was too real"}
+{"channel": "random", "date": "2025-11-26", "time": "10:30", "author": "Owen", "text": "offsite planning: vote for dates in the poll, jan 27-28 or feb 3-4"}
+{"channel": "random", "date": "2025-11-26", "time": "10:41", "author": "Tomasz", "text": "anything but a ropes course"}
+{"channel": "random", "date": "2025-11-26", "time": "10:42", "author": "Rosa", "text": "seconded"}
+{"channel": "random", "date": "2025-12-15", "time": "16:02", "author": "Dana", "text": "holiday coverage sheet pinned here. pls fill in by friday"}
+{"channel": "random", "date": "2025-12-19", "time": "14:00", "author": "Rosa", "text": "white elephant at 3 in the big room, $20 limit :gift:"}
+{"channel": "random", "date": "2025-12-19", "time": "15:50", "author": "Kenji", "text": "i got a desk cactus. i will name it CI"}
+{"channel": "random", "date": "2026-01-09", "time": "12:00", "author": "Priya", "text": "lena + me getting pho, anyone?"}
+{"channel": "random", "date": "2026-01-09", "time": "12:01", "author": "Farid", "text": "yes"}
+{"channel": "random", "date": "2026-01-23", "time": "09:15", "author": "Dana", "text": "offsite agenda is in notion. bus leaves 8:30 sharp on the 27th, dont be late"}
+{"channel": "random", "date": "2026-01-27", "time": "08:34", "author": "Farid", "text": "on the bus. kenji where are you"}
+{"channel": "random", "date": "2026-01-27", "time": "08:35", "author": "Kenji", "text": "running"}
+{"channel": "random", "date": "2026-01-28", "time": "18:00", "author": "Owen", "text": "thanks all for a great offsite. photos in the shared folder"}
+{"channel": "random", "date": "2026-02-06", "time": "09:10", "author": "Marcus", "text": "out next week, skiing. releases are farid's problem :skier:"}
+{"channel": "random", "date": "2026-02-06", "time": "09:11", "author": "Farid", "text": "they are not"}
+{"channel": "random", "date": "2026-02-14", "time": "13:13", "author": "Rosa", "text": "dog of the day :dog: [image]"}
+{"channel": "random", "date": "2026-02-14", "time": "13:15", "author": "Lena", "text": "10/10"}
+{"channel": "random", "date": "2026-02-20", "time": "16:30", "author": "Tomasz", "text": "second round interviews next week, need one more person for the system design loop"}
+{"channel": "random", "date": "2026-02-20", "time": "16:41", "author": "Priya", "text": "me tues/wed"}
+{"channel": "random", "date": "2026-03-06", "time": "11:45", "author": "Owen", "text": "lunch: dumpling place, thread your orders by 12:15"}
+{"channel": "random", "date": "2026-03-06", "time": "11:47", "author": "Lena", "text": "pork + chive x2"}
+{"channel": "random", "date": "2026-03-06", "time": "11:48", "author": "Kenji", "text": "same + scallion pancake"}
+{"channel": "random", "date": "2026-03-13", "time": "17:00", "author": "Farid", "text": "pi day tomorrow, bringing pie. it's a saturday so monday pie"}
+{"channel": "random", "date": "2026-03-17", "time": "10:02", "author": "Priya", "text": "monday pie was tuesday pie but it was good"}
+{"channel": "random", "date": "2026-03-20", "time": "09:30", "author": "Marcus", "text": "ooo apr 2-6, family thing"}
+{"channel": "random", "date": "2026-03-24", "time": "12:00", "author": "Owen", "text": "new coffee machine in the kitchen. please read the sign before touching it :coffee:"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:10", "author": "Farid", "text": ":rotating_light: opening an incident for invoice amounts off by a cent. finance found ~40 invoices where the total doesn't match the line amounts"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:14", "author": "Priya", "text": "taking a look"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:40", "author": "Priya", "text": "found it. amounts are float dollars, we add floats and round at the end so stuff like 0.1+0.2 creeps in and a few totals land a cent low"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:42", "author": "Farid", "text": "customer impact? anyone overcharged"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:45", "author": "Priya", "text": "undercharged by a cent, mostly. finance says eat it"}
+{"channel": "incidents", "date": "2025-10-20", "time": "16:46", "author": "Owen", "text": "lol fine. can we make sure it doesnt happen again tho"}
+{"channel": "incidents", "date": "2025-10-20", "time": "17:05", "author": "Priya", "text": "short term patching the report to round per line. long term we already have the Money type (integer cents) and basically nothing uses it"}
+{"channel": "incidents", "date": "2025-10-21", "time": "10:15", "author": "Dana", "text": "follow up on yesterday's rounding thing, talked w priya + tomasz. decision: new code uses `Money` from parcelo.money for amounts, no float amounts. when you have to take a float from old code, wrap it with Money.parse at the edge. we are not rewriting the old modules right now"}
+{"channel": "incidents", "date": "2025-10-21", "time": "10:20", "author": "Tomasz", "text": "+1. converting all of invoices.py is a quarter of work and nobody has that"}
+{"channel": "incidents", "date": "2025-10-21", "time": "10:22", "author": "Kenji", "text": "does Money.parse handle strings too? the csv import gives me strings"}
+{"channel": "incidents", "date": "2025-10-21", "time": "10:24", "author": "Priya", "text": "yes float int str Decimal. look at money.py its short"}
+{"channel": "incidents", "date": "2025-10-21", "time": "10:30", "author": "Farid", "text": "closing the incident, no postmortem per dana"}
+{"channel": "incidents", "date": "2025-10-27", "time": "09:00", "author": "Farid", "text": "on call handoff: quiet week, one label printer page (not ours). kenji you're up"}
+{"channel": "incidents", "date": "2025-12-01", "time": "08:40", "author": "Farid", "text": ":rotating_light: support reports invoices dated tomorrow for west coast customers. looking"}
+{"channel": "incidents", "date": "2025-12-01", "time": "08:55", "author": "Farid", "text": "issued_at vs paid_at look inconsistent, some have a timezone some dont?? pulling priya in"}
+{"channel": "incidents", "date": "2025-12-01", "time": "09:20", "author": "Priya", "text": "yeah its a mess, the batch job on the reporting box runs in local time and the api doesn't. writing it up, mitigating first"}
+{"channel": "incidents", "date": "2025-12-01", "time": "09:22", "author": "Farid", "text": "mitigated by restarting the batch job with TZ=UTC. leaving open for the postmortem"}
+{"channel": "incidents", "date": "2025-12-08", "time": "09:00", "author": "Farid", "text": "on call handoff: postmortem done (notion), nothing else. tomasz you're up"}
+{"channel": "incidents", "date": "2026-01-15", "time": "07:02", "author": "Farid", "text": ":rotating_light: swiftline API returning 503 on label creation. shipments stuck in created"}
+{"channel": "incidents", "date": "2026-01-15", "time": "07:05", "author": "Farid", "text": "their status page is green :upside_down_face:"}
+{"channel": "incidents", "date": "2026-01-15", "time": "07:30", "author": "Tomasz", "text": "im up. we retry 3 times then give up, so a lot of these are just failed. can requeue once they're back"}
+{"channel": "incidents", "date": "2026-01-15", "time": "08:10", "author": "Farid", "text": "swiftline confirms outage, no ETA"}
+{"channel": "incidents", "date": "2026-01-15", "time": "09:45", "author": "Farid", "text": "they're back. requeueing 412 failed label jobs"}
+{"channel": "incidents", "date": "2026-01-15", "time": "10:20", "author": "Farid", "text": "all requeued. closing. owen can you let the big accounts know"}
+{"channel": "incidents", "date": "2026-01-15", "time": "10:25", "author": "Owen", "text": "on it"}
+{"channel": "incidents", "date": "2026-01-15", "time": "11:02", "author": "Tomasz", "text": "we should do real backoff instead of 3 quick retries, will file it"}
+{"channel": "incidents", "date": "2026-02-06", "time": "02:13", "author": "Farid", "text": "db disk at 85%, log table growing. rotating"}
+{"channel": "incidents", "date": "2026-02-06", "time": "02:30", "author": "Farid", "text": "fine now. filed a ticket to add retention"}
+{"channel": "incidents", "date": "2026-02-09", "time": "09:00", "author": "Farid", "text": "on call handoff: the disk thing, otherwise quiet. lena shadows me this week"}
+{"channel": "incidents", "date": "2026-03-08", "time": "03:10", "author": "Farid", "text": "pager: api latency p99 2s. looks like the reporting job again"}
+{"channel": "incidents", "date": "2026-03-08", "time": "03:25", "author": "Farid", "text": "killed the job, latency normal. tomasz can you look at that query in the morning"}
+{"channel": "incidents", "date": "2026-03-09", "time": "09:10", "author": "Tomasz", "text": "looking. it's a full scan, adding an index"}
+{"channel": "incidents", "date": "2026-03-16", "time": "09:00", "author": "Farid", "text": "on call handoff: the reporting query (fixed), northpost sandbox flaky. kenji you're up"}
+{"channel": "incidents", "date": "2026-03-21", "time": "14:00", "author": "Farid", "text": "northpost sandbox is down, not prod. no action, fyi if you're testing against it"}
