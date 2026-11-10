@@ -1,0 +1,7 @@
+{
+  "id": "PRC-146",
+  "title": "Write off an invoice",
+  "snapshot": "b",
+  "conventions": ["events", "money", "clock", "changelog"],
+  "body": "Finance needs a way to write off invoices we will never collect.\n\nAdd `write_off(invoice_id)` to `parcelo/invoices.py`. It sets the invoice status to \"written_off\", stores the time of the write-off in a new `written_off_at` field on `Invoice` (in `parcelo/models.py`), and returns the amount that was written off.\n\nOnly open invoices can be written off."
+}
