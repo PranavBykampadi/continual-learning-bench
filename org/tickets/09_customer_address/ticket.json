@@ -1,0 +1,12 @@
+{
+  "id": "PRC-109",
+  "title": "Customer addresses",
+  "snapshot": "a",
+  "conventions": [
+    "ids",
+    "errors",
+    "audit",
+    "changelog"
+  ],
+  "body": "Customers need delivery addresses on file.\n\nAdd `add_address(customer_id, line, city)` to `parcelo/customers.py`. It creates an `Address` with an id, the customer id, the street line and the city, stores it, and returns it. Add the `Address` dataclass to `parcelo/models.py` (fields `id`, `customer_id`, `line`, `city`) and a new `addresses` collection to `parcelo/store.py`, reset in `reset()` like the others, so addresses live in `db.addresses`.\n\nAdding an address for a customer that does not exist must fail. An empty street line or an empty city must fail too."
+}
