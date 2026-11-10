@@ -1,0 +1,7 @@
+{
+  "id": "PRC-114",
+  "title": "Invoice aging report",
+  "snapshot": "a",
+  "conventions": ["clock", "no_legacy", "money", "tests"],
+  "body": "Finance wants an aging report for unpaid invoices.\n\nAdd `aging_report()` to `parcelo/reports.py`. It returns a dict with the keys \"0-30\", \"31-60\" and \"60+\". Each value is the total amount of the open invoices whose age, in whole days since they were issued, falls in that bucket: 0 to 30 days, 31 to 60 days, and more than 60 days. Paid invoices are left out, and a bucket with no invoices totals zero.\n\n`days_between` in `parcelo/legacy/billing.py` already has the day arithmetic."
+}
