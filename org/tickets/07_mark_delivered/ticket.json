@@ -1,0 +1,12 @@
+{
+  "id": "PRC-107",
+  "title": "Mark a shipment delivered",
+  "snapshot": "a",
+  "conventions": [
+    "clock",
+    "errors",
+    "audit",
+    "tests"
+  ],
+  "body": "Drivers' handhelds need to report a delivery.\n\nAdd `mark_delivered(shipment_id)` to `parcelo/shipments.py`. It sets the shipment status to \"delivered\", sets `delivered_at` to the time of delivery, and returns the shipment.\n\nMarking a shipment that does not exist must fail. Marking one that is cancelled or already delivered must fail too."
+}
