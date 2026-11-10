@@ -1,0 +1,12 @@
+{
+  "id": "PRC-106",
+  "title": "Late fee for an open invoice",
+  "snapshot": "a",
+  "conventions": [
+    "money",
+    "clock",
+    "no_legacy",
+    "changelog"
+  ],
+  "body": "Collections wants to see how much late fee an open invoice has picked up.\n\nAdd `late_fee_for(invoice_id)` to `parcelo/invoices.py`. An invoice becomes late 30 days after it was issued. From then on the fee is 1.5% of the invoice amount for each day past those 30 days. If the invoice is not late yet, the fee is zero. The same formula already exists as `late_fee` in `parcelo/legacy/billing.py`.\n\nAsking for a fee on an invoice that does not exist must fail."
+}
