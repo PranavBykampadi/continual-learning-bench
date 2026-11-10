@@ -1,0 +1,7 @@
+{
+  "id": "PRC-111",
+  "title": "Timestamped shipment notes",
+  "snapshot": "a",
+  "conventions": ["clock", "errors", "audit", "tests"],
+  "body": "Support wants to leave notes on a shipment and see when each one was written.\n\nAdd `add_note(shipment_id, text)` to `parcelo/shipments.py`. It appends a dict `{\"text\": ..., \"at\": <time>}` to the shipment's notes, where `at` is the time the note was added, and returns the shipment.\n\nAdding a note to a shipment that does not exist must fail. Empty text must fail too."
+}
