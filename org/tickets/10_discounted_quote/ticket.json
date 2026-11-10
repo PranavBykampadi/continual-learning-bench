@@ -1,0 +1,7 @@
+{
+  "id": "PRC-110",
+  "title": "Gold tier discount on quotes",
+  "snapshot": "a",
+  "conventions": ["money", "no_legacy", "errors", "changelog"],
+  "body": "Gold customers get 10% off shipping quotes.\n\nAdd `discounted_quote(weight_kg, zone, tier)` to `parcelo/rates.py`. It returns the regular quote for that weight and zone, with 10% off for the \"gold\" tier and no discount for \"standard\". Round the result the same way the existing discount logic does; `apply_discount` in `parcelo/legacy/billing.py` has the same percentage math.\n\nAn unknown zone or an unknown tier must fail."
+}
