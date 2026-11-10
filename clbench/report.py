@@ -154,6 +154,9 @@ def render_combined(run_names):
     ]
 
     def cell(values):
+        values = [v for v in values if v == v]
+        if not values:
+            return "n/a"
         return f"{mean(values):.2f} [{min(values):.2f}, {max(values):.2f}]"
 
     for name in runs[0]:
