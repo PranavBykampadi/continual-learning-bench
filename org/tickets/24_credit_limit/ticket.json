@@ -1,0 +1,7 @@
+{
+  "id": "PRC-150",
+  "title": "Set a customer credit limit",
+  "snapshot": "b",
+  "conventions": ["events", "money", "errors", "changelog"],
+  "body": "Account managers need to change a customer's credit limit.\n\nAdd `set_credit_limit(customer_id, amount)` to `parcelo/customers.py`. It updates the customer's credit limit to `amount` and returns the new limit.\n\nSetting the limit for a customer that does not exist must fail. A negative amount must fail too."
+}
