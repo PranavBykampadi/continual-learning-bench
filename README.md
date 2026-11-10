@@ -14,7 +14,7 @@ Published continual-learning benchmarks for coding agents replay public GitHub i
 - None test rules that exist only inside one organization. Public repos are in the training data, so a public-repo benchmark cannot tell "learned on the job" from "already knew".
 - None compare how much an agent learns as the feedback gets worse. A real organization mostly produces "merged" or "not merged", not a reviewer who explains the rule.
 
-This prototype covers those three gaps at small scale.
+This prototype covers those three gaps at small scale. It also gives the agent the other places a company keeps its knowledge (Slack, Notion, old pull request threads), and measures whether the agent finds a rule there before it breaks the rule.
 
 ## How it works
 
@@ -37,6 +37,28 @@ This prototype covers those three gaps at small scale.
 | `no_legacy` | never import `parcelo.legacy` |
 
 After ticket 14 the team migrates from the audit log to an events outbox (`org/migration/`). The rule the agent learned in the first half is now wrong. The benchmark uses that change to measure how fast a learner drops a stale rule.
+
+### The company's written knowledge
+
+`org/knowledge/` is a simulated history of the team: 248 Slack messages in six channels, 8 Notion pages, and 6 old pull request threads. About 4% of the Slack messages bear on a rule. The rest is deploys, on-call, customer problems, and lunch.
+
+Each rule is planted in a different way, so the benchmark can tell apart the ways written knowledge fails:
+
+| rule | what the written record says |
+|---|---|
+| `money` | stated in a Slack incident thread and one PR review |
+| `clock` | stated as an action item in a Notion postmortem |
+| `errors` | explained by a reviewer in a PR thread |
+| `audit` | stated on a Notion guidelines page from 2025 that nobody updates |
+| `events` | announced in Slack the evening before the migration. The guidelines page still says `audit.record`. |
+| `ids` | only implied, in a support thread about tooling that broke on an odd id |
+| `changelog` | a Notion page describes the old format. A newer Slack message from the release manager gives the current one. |
+| `no_legacy` | a junior engineer says importing it is fine. A senior engineer says the opposite a month later. |
+| `tests` | nothing is written anywhere. Only a reviewer can teach this rule. |
+
+One ticket happens per day, starting 2026-03-02. At each ticket the agent gets a `../company/` folder that holds only what was dated before that day, so the migration announcement does not exist until ticket 15. `python -m clbench.knowledge` checks the planted evidence against `org/knowledge/evidence.json`: every needle is present, the right evidence is visible at each rule's first ticket, nothing announces the migration early, and no document names a ticket or says where tests go.
+
+`--knowledge available` tells the agent the folder exists. `--knowledge directed` also tells the agent to search the folder before it writes code. Arms that use the folder carry `+org` or `+org-directed` in their name.
 
 ### A ticket
 
@@ -102,6 +124,7 @@ The gap between `notes-rich` and `notes-sparse` is the value of the explanation.
 uv venv .venv && uv pip install --python .venv/bin/python pytest
 .venv/bin/python -m clbench.validate
 ./run_all.sh my-run claude:haiku
+./run_org.sh my-run claude:haiku
 .venv/bin/python -m clbench.report my-run
 ```
 
@@ -109,7 +132,7 @@ uv venv .venv && uv pip install --python .venv/bin/python pytest
 
 ## Results
 
-Agent: Claude Haiku through the headless `claude` CLI. Two independent runs of the full 24-ticket stream per arm, 288 agent attempts in total. Each cell is the mean of the two runs, with the lower and higher run in brackets. `results/combined.md` has this table, and `results/haiku-s1/` and `results/haiku-s2/` have the per-run tables and curves. Regenerate them with `python -m clbench.report haiku-s1 haiku-s2`.
+Agent: Claude Haiku through the headless `claude` CLI. Two independent runs of the full 24-ticket stream per arm, 432 agent attempts in total across nine arms. Each cell is the mean of the two runs, with the lower and higher run in brackets. `results/combined.md` has this table, and `results/haiku-s1/` and `results/haiku-s2/` have the per-run tables and curves. Regenerate them with `python -m clbench.report haiku-s1 haiku-s2`.
 
 | arm | compliance | first-try merge | gain vs stateless | repeat-violation rate |
 |---|---|---|---|---|
@@ -131,6 +154,25 @@ What the two runs show:
 - **Plain history beats curated notes at this length.** At 24 tickets the full feedback log is about 3,700 characters, so nothing forces compression yet. A longer stream is needed to see where the log stops fitting.
 - **The placebo arm scored below stateless in both runs** (-0.16 and -0.12). Extra context that carries no rules did not help. Why it hurt is not established. One guess is that the line "keep the change small" discourages changelog entries and new test files.
 
+### With the company's Slack, Notion, and pull request history
+
+| arm | compliance | first-try merge | followed on first exposure | agent turns per ticket |
+|---|---|---|---|---|
+| `none` (stateless, no folder) | 0.47 [0.46, 0.48] | 0.04 | 0.50 | 12.2 |
+| `none` + folder available | 0.56 [0.53, 0.59] | 0.12 | 0.67 | 14.2 |
+| `none` + told to search the folder | 0.74 [0.73, 0.75] | 0.25 | 0.72 | 19.6 |
+| `notes`, rich feedback, no folder | 0.89 [0.88, 0.90] | 0.67 | 0.33 | 12.1 |
+| `notes`, rich feedback + told to search | 0.90 [0.89, 0.92] | 0.58 | 0.78 | 18.7 |
+
+"Followed on first exposure" pools both runs (18 first meetings per arm). `results/combined.md` has the per-rule table that the points below quote.
+
+- **Access is not use.** With the folder only mentioned, compliance moved from 0.47 to 0.56. Told to search first, the same agent reached 0.74. The agent took 14 turns per ticket in the first case and 20 in the second, so the difference is whether it looked.
+- **Written knowledge fixes the first mistake. Feedback fixes the rest.** Notes with review comments reach 0.89 overall but follow a rule only 33% of the time on first meeting, because the agent has to break a rule once to learn it. Adding search lifts first-meeting compliance to 78% and leaves the overall number where it was.
+- **A rule nobody wrote down stays unlearned without a reviewer.** For `tests`, the stateless agent with search follows the rule 17% of the time. With review comments it reaches 83% to 92%.
+- **The agent caught the migration from Slack.** After the rule change, the stateless agent with directed search followed `events` on 14 of 16 tries, against 1 of 16 with no folder. In both runs it followed the rule on the first ticket after the announcement, before any reviewer mentioned it.
+- **Stale and conflicting sources cost accuracy.** With directed search, compliance is 1.00 on `audit` (one clear page) and 0.95 on `clock`, but 0.68 on `changelog` (old Notion page against a newer Slack message) and 0.67 on `no_legacy` (two people disagree).
+- **Search plus notes did not raise first-try merges.** It scored 0.58 against 0.67 for notes alone. The ranges of the two runs nearly touch (0.54 to 0.62 against 0.62 to 0.71), so two runs do not settle whether that drop is real.
+
 What limits these numbers: the run-to-run spread on compliance is 0.03 or less for every arm except sparse notes, where it is 0.23. Every attempt ran to completion with no CLI error, and CI pass rate is 0.92 or higher in every arm, so the gaps come from rule-following and not from failed runs. Two runs give a range, not a confidence interval.
 
 ## Limits
@@ -138,6 +180,7 @@ What limits these numbers: the run-to-run spread on compliance is 0.03 or less f
 - **Two runs, 24 tickets, one model.** A whole stream is one sample, so there are two samples per arm. The brackets are a range, not a confidence interval.
 - **The codebase does not grow.** Every ticket starts from the same snapshot (one of two). The agent's own earlier changes do not persist, so the benchmark does not measure error build-up.
 - **The reviewer is a script.** It always catches a broken rule and always explains it well. Real reviewers miss things and most agent PRs get no comment. The `sparse` mode is the first step toward that.
+- **The Slack and Notion history is generated.** A model wrote it to a design. It is messier than a handbook and cleaner than a real workspace, and 248 messages is small. A real export is thousands of times larger, so finding the right message is easier here than in a real company.
 - **The rules are synthetic.** Nine clean rules are easier to learn than the taste of a real team.
 - **The agent can read the repo it works in, and nothing else is sandboxed.** The hidden tests live outside the workspace, but a determined agent with shell access could look for them.
 - **Ticket order is fixed.** `--order shuffled` exists and has not been run.
