@@ -1,0 +1,12 @@
+{
+  "id": "PRC-102",
+  "title": "Void an invoice",
+  "snapshot": "a",
+  "conventions": [
+    "clock",
+    "errors",
+    "audit",
+    "changelog"
+  ],
+  "body": "Finance needs to void invoices that were issued by mistake.\n\nAdd `void_invoice(invoice_id)` to `parcelo/invoices.py`. It sets the invoice status to \"void\", stores the time of the void in a new `voided_at` field on `Invoice` (in `parcelo/models.py`), and returns the invoice.\n\nVoiding an invoice that does not exist must fail. Voiding one that is already paid or already void must fail too."
+}
