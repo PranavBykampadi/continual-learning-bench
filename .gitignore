@@ -5,3 +5,5 @@ __pycache__/
 runs/logs/
 workspaces/
 .cache/
+reports/
+research_notes/

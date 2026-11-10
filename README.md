@@ -8,7 +8,7 @@ Status: prototype. One model, two runs per arm. Read the numbers as a demonstrat
 
 ## Why this benchmark
 
-Published continual-learning benchmarks for coding agents replay public GitHub issues and score them with gold tests. `reports/` has the survey. Three things are missing from them:
+Published continual-learning benchmarks for coding agents replay public GitHub issues and score them with gold tests. Three things are missing from the ones we looked at:
 
 - The learning signal is never deployment feedback. No benchmark we found gives the agent CI output and review comments and holds the gold tests back for scoring.
 - None test rules that exist only inside one organization. Public repos are in the training data, so a public-repo benchmark cannot tell "learned on the job" from "already knew".
