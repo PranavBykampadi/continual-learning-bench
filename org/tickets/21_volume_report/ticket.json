@@ -1,0 +1,7 @@
+{
+  "id": "PRC-147",
+  "title": "Per-customer volume report",
+  "snapshot": "b",
+  "conventions": ["no_legacy", "changelog", "tests"],
+  "body": "Account managers want to see how much each customer ships.\n\nAdd `volume_report()` to `parcelo/reports.py`. It returns a dict keyed by customer id, where each value is `{\"shipments\": <count>, \"tier\": <label>}`. The count is the number of shipments the customer has, and every customer is included, even ones with no shipments. The tier label uses the same thresholds as `volume_tier` in `parcelo/legacy/billing.py`."
+}
