@@ -1,0 +1,7 @@
+{
+  "id": "PRC-143",
+  "title": "Schedule a pickup",
+  "snapshot": "b",
+  "conventions": ["ids", "events", "clock", "errors"],
+  "body": "Drivers need to book pickups for packages that are ready to go.\n\nAdd a new module `parcelo/pickups.py` with `schedule_pickup(shipment_id, window_start)`. It creates a `Pickup` with an id, the shipment id, `window_start`, and `scheduled_at` (when it was booked), saves it in a new `pickups` collection on the store, and returns it. Define the `Pickup` dataclass in `parcelo/models.py`, and add the `pickups` collection to `parcelo/store.py` (cleared in `reset()` like the others).\n\nScheduling a pickup for a shipment that does not exist must fail. It must also fail for a shipment that is not in status \"created\"."
+}
