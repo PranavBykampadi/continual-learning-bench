@@ -143,5 +143,38 @@ def render(run_name):
     return "\n".join(lines)
 
 
+def render_combined(run_names):
+    """One row per arm across independent runs of the same stream. Each run is one sample."""
+    runs = [load(name) for name in run_names]
+    lines = [
+        f"# Combined results: {', '.join(f'`{n}`' for n in run_names)}", "",
+        "Each cell is the mean over runs, with the lowest and highest run in brackets.", "",
+        "| arm | compliance | first-try merge | gain vs stateless | repeat-violation rate | late-third compliance |",
+        "|---|---|---|---|---|---|",
+    ]
+
+    def cell(values):
+        return f"{mean(values):.2f} [{min(values):.2f}, {max(values):.2f}]"
+
+    for name in runs[0]:
+        per_run = [run[name] for run in runs if name in run]
+        gains = [
+            mean(a.feedback.compliance for a in run[name]) - mean(a.feedback.compliance for a in run["none-rich"])
+            for run in runs if name in run
+        ]
+        lines.append(
+            f"| {name} | {cell([mean(a.feedback.compliance for a in r) for r in per_run])} | "
+            f"{cell([mean(a.feedback.merged for a in r) for r in per_run])} | {cell(gains)} | "
+            f"{cell([repeat_violation_rate(r)[0] for r in per_run])} | "
+            f"{cell([mean(a.feedback.compliance for a in thirds(r)[2]) for r in per_run])} |"
+        )
+    text = "\n".join(lines) + "\n"
+    (ROOT / "results" / "combined.md").write_text(text)
+    return text
+
+
 if __name__ == "__main__":
-    print(render(sys.argv[1]))
+    for run_name in sys.argv[1:]:
+        print(render(run_name))
+    if len(sys.argv) > 2:
+        print(render_combined(sys.argv[1:]))
