@@ -1,0 +1,12 @@
+{
+  "id": "PRC-103",
+  "title": "Quote with fuel surcharge",
+  "snapshot": "a",
+  "conventions": [
+    "money",
+    "no_legacy",
+    "errors",
+    "tests"
+  ],
+  "body": "Sales wants quotes that already include the fuel surcharge.\n\nAdd `quote_with_surcharge(weight_kg, zone)` to `parcelo/rates.py`. It returns the normal quote for that weight and zone plus the fuel surcharge for the zone. The surcharge percentages are the same ones `fuel_surcharge` in `parcelo/legacy/billing.py` already uses.\n\nAn unknown zone must fail, and so must a weight that is zero or negative."
+}
