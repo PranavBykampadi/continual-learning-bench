@@ -1,0 +1,7 @@
+{
+  "id": "PRC-113",
+  "title": "Apply a credit to an open invoice",
+  "snapshot": "a",
+  "conventions": ["money", "errors", "audit", "changelog"],
+  "body": "Billing needs to knock a credit off an invoice that has not been paid yet.\n\nAdd `apply_credit(invoice_id, amount)` to `parcelo/invoices.py`. It reduces the amount of an open invoice by the credit and returns the remaining amount. The invoice's amount must still work with the existing reports and the customer balance after a credit is applied.\n\nApplying a credit to an invoice that does not exist must fail. So must applying one to an invoice that is not open, or a credit larger than the invoice's amount."
+}
