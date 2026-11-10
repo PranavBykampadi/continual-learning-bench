@@ -1,0 +1,7 @@
+{
+  "id": "PRC-112",
+  "title": "File claims on delivered shipments",
+  "snapshot": "a",
+  "conventions": ["ids", "money", "clock", "audit", "errors"],
+  "body": "Customers can claim money back when something goes wrong with a delivered shipment.\n\nAdd a new module `parcelo/claims.py` with `file_claim(shipment_id, amount, reason)`. It stores a Claim with the fields `id`, `shipment_id`, `amount`, `reason` and `filed_at` in a new `db.claims` collection (add it to `parcelo/store.py` and clear it in `reset()`), and returns the claim.\n\nOnly delivered shipments can have claims. The shipment must exist, and the amount must be positive. Anything else must fail."
+}
