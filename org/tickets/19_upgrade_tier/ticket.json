@@ -1,0 +1,7 @@
+{
+  "id": "PRC-145",
+  "title": "Upgrade a customer to gold",
+  "snapshot": "b",
+  "conventions": ["events", "errors", "changelog", "tests"],
+  "body": "Sales wants to promote customers to the gold tier without recreating them.\n\nAdd `upgrade_tier(customer_id)` to `parcelo/customers.py`. It moves a standard customer to the gold tier and returns the customer.\n\nUpgrading a customer that does not exist must fail. Upgrading one that is already gold must fail too."
+}
