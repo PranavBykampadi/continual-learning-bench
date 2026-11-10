@@ -7,7 +7,7 @@ import tempfile
 from clbench.agents import claude, make_solver
 from clbench.feedback import FEEDBACK_MODES
 from clbench.grade import diff_text, grade, new_workspace
-from clbench.knowledge import NOTE, materialize
+from clbench.knowledge import ARM_SUFFIX, KNOWLEDGE_MODES, materialize
 from clbench.learners import LEARNERS
 from clbench.model import ROOT, Attempt, load_tickets
 
@@ -20,7 +20,7 @@ def ordered(tickets, order, seed):
     return shuffled
 
 
-def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, limit=None, knowledge=False):
+def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, limit=None, knowledge="none"):
     context_of, observe = LEARNERS[learner]
     render = FEEDBACK_MODES[feedback_mode]
     solve = make_solver(agent)
@@ -32,7 +32,7 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
         text, result = claude(prompt, model, tempfile.mkdtemp(prefix="clb-reflect-"), "", budget_usd=0.5)
         return text, result.cost_usd
 
-    arm = f"{learner}-{feedback_mode}" + ("+org" if knowledge else "")
+    arm = f"{learner}-{feedback_mode}" + ARM_SUFFIX[knowledge]
     arm_dir = ROOT / "runs" / run_name / arm
     arm_dir.mkdir(parents=True, exist_ok=True)
     log, state_file = arm_dir / "attempts.jsonl", arm_dir / "state.json"
@@ -45,9 +45,9 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
             continue
         context = context_of(state, ticket)
         workspace = new_workspace(ticket.snapshot)
-        if knowledge:
+        if KNOWLEDGE_MODES[knowledge]:
             materialize(workspace.parent / "company", position)
-            context = NOTE + context
+            context = KNOWLEDGE_MODES[knowledge] + context
         result = solve(ticket, context, workspace)
         diff = diff_text(workspace, ticket.snapshot)
         feedback = grade(ticket, workspace)
@@ -78,7 +78,8 @@ def main():
     parser.add_argument("--order", choices=["stream", "shuffled"], default="stream")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--knowledge", action="store_true", help="give the agent the company Slack, Notion and PR history")
+    parser.add_argument("--knowledge", choices=KNOWLEDGE_MODES, default="none",
+                        help="give the agent the company Slack, Notion and PR history")
     args = parser.parse_args()
     run_arm(args.run_name, args.learner, args.feedback, args.agent, args.order, args.seed, args.limit, args.knowledge)
 

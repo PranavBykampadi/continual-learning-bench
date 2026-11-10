@@ -13,10 +13,18 @@ KNOWLEDGE = ORG / "knowledge"
 STREAM_START = date(2026, 3, 2)
 MIGRATION_POSITION = 14
 
-NOTE = (
+_AVAILABLE = (
     "\nThe company's Slack export, Notion pages and past pull request discussions are in `../company/` "
     "(read-only). The export was taken this morning.\n"
 )
+_DIRECTED = _AVAILABLE + (
+    "Before you write code, search that folder for team decisions that affect this change, "
+    "and follow what the team currently does.\n"
+)
+
+# How the agent is told about the company folder. "available" mentions it. "directed" also says to search it first.
+KNOWLEDGE_MODES = {"none": None, "available": _AVAILABLE, "directed": _DIRECTED}
+ARM_SUFFIX = {"none": "", "available": "+org", "directed": "+org-directed"}
 
 
 def ticket_date(position):
