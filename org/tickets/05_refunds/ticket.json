@@ -1,0 +1,12 @@
+{
+  "id": "PRC-105",
+  "title": "Refunds for paid invoices",
+  "snapshot": "a",
+  "conventions": [
+    "ids",
+    "money",
+    "clock",
+    "audit"
+  ],
+  "body": "Support needs to record refunds against invoices that customers already paid.\n\nAdd a new module `parcelo/refunds.py` with `create_refund(invoice_id, amount)`. It creates a `Refund` with an id, the invoice id, the amount and a creation time, stores it, and returns it. Add the `Refund` dataclass to `parcelo/models.py` (fields `id`, `invoice_id`, `amount`, `created_at`) and a new `refunds` collection to `parcelo/store.py`, reset in `reset()` like the others, so refunds live in `db.refunds`.\n\nOnly paid invoices can be refunded. Refunding an invoice that does not exist, or one that is not paid, must fail."
+}
