@@ -1,0 +1,7 @@
+{
+  "id": "PRC-144",
+  "title": "Insurance fee for declared value",
+  "snapshot": "b",
+  "conventions": ["money", "errors", "no_legacy", "tests"],
+  "body": "We want to offer insurance on shipments with a declared value.\n\nAdd `insurance_fee(declared_value, zone)` to `parcelo/rates.py`. The fee is 2% of the declared value plus the zone's fuel surcharge percentage of the declared value, with a minimum fee of 1.00. The fuel surcharge percentages are the same ones `fuel_surcharge` in `parcelo/legacy/billing.py` already uses.\n\nAn unknown zone must fail. A declared value that is zero or negative must fail too."
+}
