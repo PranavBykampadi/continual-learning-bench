@@ -1,0 +1,7 @@
+{
+  "id": "PRC-149",
+  "title": "Split a shipment",
+  "snapshot": "b",
+  "conventions": ["ids", "events", "errors", "tests"],
+  "body": "Warehouse sometimes has to break one big shipment into several smaller ones.\n\nAdd `split_shipment(shipment_id, weights)` to `parcelo/shipments.py`. It replaces a shipment that is still in status \"created\" with one new shipment per weight in `weights`, each with the same customer and zone as the original. The original is marked with status \"split\", and the new shipments are returned in the same order as the weights.\n\nSplitting a shipment that does not exist must fail. Splitting one that is not in status \"created\" must fail too. The weights must add up to the original shipment's weight, otherwise it must fail."
+}
