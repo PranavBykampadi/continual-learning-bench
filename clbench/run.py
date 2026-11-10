@@ -7,6 +7,7 @@ import tempfile
 from clbench.agents import claude, make_solver
 from clbench.feedback import FEEDBACK_MODES
 from clbench.grade import diff_text, grade, new_workspace
+from clbench.knowledge import NOTE, materialize
 from clbench.learners import LEARNERS
 from clbench.model import ROOT, Attempt, load_tickets
 
@@ -19,7 +20,7 @@ def ordered(tickets, order, seed):
     return shuffled
 
 
-def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, limit=None):
+def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, limit=None, knowledge=False):
     context_of, observe = LEARNERS[learner]
     render = FEEDBACK_MODES[feedback_mode]
     solve = make_solver(agent)
@@ -31,7 +32,8 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
         text, result = claude(prompt, model, tempfile.mkdtemp(prefix="clb-reflect-"), "", budget_usd=0.5)
         return text, result.cost_usd
 
-    arm_dir = ROOT / "runs" / run_name / f"{learner}-{feedback_mode}"
+    arm = f"{learner}-{feedback_mode}" + ("+org" if knowledge else "")
+    arm_dir = ROOT / "runs" / run_name / arm
     arm_dir.mkdir(parents=True, exist_ok=True)
     log, state_file = arm_dir / "attempts.jsonl", arm_dir / "state.json"
     done = len(log.read_text().splitlines()) if log.exists() else 0
@@ -43,6 +45,9 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
             continue
         context = context_of(state, ticket)
         workspace = new_workspace(ticket.snapshot)
+        if knowledge:
+            materialize(workspace.parent / "company", position)
+            context = NOTE + context
         result = solve(ticket, context, workspace)
         diff = diff_text(workspace, ticket.snapshot)
         feedback = grade(ticket, workspace)
@@ -58,7 +63,7 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
             handle.write(attempt.to_json() + "\n")
         shutil.rmtree(workspace.parent, ignore_errors=True)
         print(
-            f"[{learner}-{feedback_mode}] {position:02d} {ticket.id} ci={'ok' if feedback.ci_passed else 'FAIL'} "
+            f"[{arm}] {position:02d} {ticket.id} ci={'ok' if feedback.ci_passed else 'FAIL'} "
             f"violated={feedback.violated} cost=${result.cost_usd + learn_cost:.3f}",
             flush=True,
         )
@@ -73,8 +78,9 @@ def main():
     parser.add_argument("--order", choices=["stream", "shuffled"], default="stream")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--knowledge", action="store_true", help="give the agent the company Slack, Notion and PR history")
     args = parser.parse_args()
-    run_arm(args.run_name, args.learner, args.feedback, args.agent, args.order, args.seed, args.limit)
+    run_arm(args.run_name, args.learner, args.feedback, args.agent, args.order, args.seed, args.limit, args.knowledge)
 
 
 if __name__ == "__main__":

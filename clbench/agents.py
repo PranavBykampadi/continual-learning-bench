@@ -35,6 +35,9 @@ def claude(prompt, model, cwd, tools, budget_usd):
         "--no-session-persistence", "--permission-mode", "acceptEdits",
         "--max-budget-usd", str(budget_usd), "--tools", tools,
     ]
+    company = Path(cwd).parent / "company"
+    if company.exists():
+        command += ["--add-dir", str(company)]
     started = time.time()
     try:
         done = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=900)
