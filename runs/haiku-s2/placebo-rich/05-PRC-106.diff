@@ -1,0 +1,26 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-10 12:51:17
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import late_fee
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,14 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++LATE_AFTER_DAYS = 30
++
++
++def late_fee_for(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    days_past_due = (datetime.utcnow() - invoice.issued_at).days - LATE_AFTER_DAYS
++    return late_fee(invoice.amount, days_past_due)

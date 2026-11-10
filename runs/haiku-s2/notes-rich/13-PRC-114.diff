@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:58:42
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report for open invoices (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:58:35
+@@ -1,6 +1,33 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def _as_utc(moment):
++    # invoices.issue_invoice stores naive UTC datetimes; clock.now() is aware.
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
++def aging_report():
++    """Total open invoice amounts bucketed by whole days since issue."""
++    now = _as_utc(clock.now())
++    totals = {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        age_days = max(0, (now - _as_utc(invoice.issued_at)).days)
++        if age_days <= 30:
++            bucket = "0-30"
++        elif age_days <= 60:
++            bucket = "31-60"
++        else:
++            bucket = "60+"
++        totals[bucket] = totals[bucket] + Money.parse(invoice.amount)
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_aging.py b/tests/unit/test_reports_aging.py
+--- a/tests/unit/test_reports_aging.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_aging.py	2026-11-10 12:58:39
+@@ -0,0 +1,81 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import clock
++from parcelo.money import Money
++from parcelo.models import Invoice
++from parcelo.reports import aging_report
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
++
++
++def _add(inv_id, days_old, amount, status="open", naive=False):
++    issued = NOW - timedelta(days=days_old)
++    if naive:
++        issued = issued.replace(tzinfo=None)
++    db.invoices[inv_id] = Invoice(
++        id=inv_id,
++        shipment_id="shp_x",
++        amount=amount,
++        status=status,
++        issued_at=issued,
++    )
++
++
++def test_empty_report_is_all_zero():
++    clock.set_fixed(NOW)
++    report = aging_report()
++    assert report == {
++        "0-30": Money.zero(),
++        "31-60": Money.zero(),
++        "60+": Money.zero(),
++    }
++
++
++def test_buckets_by_whole_days():
++    clock.set_fixed(NOW)
++    _add("a", 0, 10.00)
++    _add("b", 30, 1.00)
++    _add("c", 31, 2.00)
++    _add("d", 60, 4.00)
++    _add("e", 61, 8.00)
++    report = aging_report()
++    assert report["0-30"] == Money.parse(11.00)
++    assert report["31-60"] == Money.parse(6.00)
++    assert report["60+"] == Money.parse(8.00)
++
++
++def test_paid_invoices_are_excluded():
++    clock.set_fixed(NOW)
++    _add("open1", 5, 10.00)
++    _add("paid1", 5, 99.00, status="paid")
++    _add("paid2", 90, 99.00, status="paid")
++    report = aging_report()
++    assert report["0-30"] == Money.parse(10.00)
++    assert report["31-60"] == Money.zero()
++    assert report["60+"] == Money.zero()
++
++
++def test_partial_day_is_not_rounded_up():
++    clock.set_fixed(NOW)
++    db.invoices["x"] = Invoice(
++        id="x",
++        shipment_id="shp_x",
++        amount=5.00,
++        issued_at=NOW - timedelta(days=30, hours=23),
++    )
++    assert aging_report()["0-30"] == Money.parse(5.00)
++
++
++def test_naive_issued_at_is_treated_as_utc():
++    clock.set_fixed(NOW)
++    _add("n", 45, 7.25, naive=True)
++    assert aging_report()["31-60"] == Money.parse(7.25)
++
++
++def test_values_are_money_not_floats():
++    clock.set_fixed(NOW)
++    _add("a", 1, 3.10)
++    report = aging_report()
++    for value in report.values():
++        assert isinstance(value, Money)

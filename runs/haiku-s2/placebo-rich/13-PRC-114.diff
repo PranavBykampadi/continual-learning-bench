@@ -1,0 +1,32 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:54:05
+@@ -1,10 +1,28 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import days_between
+ from parcelo.store import db
+ 
+ 
+ def revenue_total():
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
++
++
++def aging_report():
++    now = datetime.utcnow()
++    buckets = {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++    for invoice in db.invoices.values():
++        if invoice.status == "paid":
++            continue
++        age = days_between(invoice.issued_at, now)
++        if age <= 30:
++            key = "0-30"
++        elif age <= 60:
++            key = "31-60"
++        else:
++            key = "60+"
++        buckets[key] += invoice.amount
++    return {key: round(total, 2) for key, total in buckets.items()}
+ 
+ 
+ def shipments_by_zone():

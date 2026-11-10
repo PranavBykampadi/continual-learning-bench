@@ -1,0 +1,36 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-10 12:55:03
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,24 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    """Reduce an open invoice's amount by a credit and return the remaining amount.
++
++    Because the reduced amount is what ``Invoice.amount`` holds, the customer
++    balance (``customers.outstanding_balance``) reflects the credit immediately.
++    Paid revenue is unaffected since only open invoices can be credited.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"invoice {invoice_id} not found")
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is not open")
++    credit = round(float(amount), 2)
++    if credit <= 0:
++        raise DomainError("E_BAD_INPUT", "credit must be positive")
++    if credit > round(invoice.amount, 2):
++        raise DomainError("E_BAD_INPUT", "credit exceeds invoice amount")
++    invoice.amount = round(invoice.amount - credit, 2)
++    return invoice.amount

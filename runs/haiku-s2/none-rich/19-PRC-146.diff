@@ -1,0 +1,106 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:57:59
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- invoices: write off open invoices (PRC-146)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-10 12:57:47
+@@ -1,6 +1,8 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -28,6 +30,18 @@
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
+     return invoice
++
++
++def write_off(invoice_id):
++    """Write off an open invoice that will never be collected. Returns the amount written off."""
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"cannot write off invoice in status {invoice.status}")
++    invoice.status = "written_off"
++    invoice.written_off_at = clock.now()
++    return invoice.amount
+ 
+ 
+ def open_invoices():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-10 12:57:45
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    written_off_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-10 12:57:54
+@@ -1,9 +1,51 @@
+-from parcelo import customers, invoices, shipments
++from datetime import datetime, timezone
+ 
++import pytest
+ 
++from parcelo import clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
+ def test_issue_and_pay():
+     c = customers.add_customer("Acme")
+     s = shipments.create_shipment(c.id, 2, "local")
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def _open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++def test_write_off_open_invoice():
++    inv = _open_invoice()
++    amount = invoices.write_off(inv.id)
++    assert amount == 7.0
++    assert inv.status == "written_off"
++    assert inv not in invoices.open_invoices()
++
++
++def test_write_off_sets_timestamp_from_clock():
++    moment = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    inv = _open_invoice()
++    invoices.write_off(inv.id)
++    assert inv.written_off_at == moment
++
++
++@pytest.mark.parametrize("status", ["paid", "written_off"])
++def test_write_off_rejects_non_open(status):
++    inv = _open_invoice()
++    inv.status = status
++    with pytest.raises(DomainError) as err:
++        invoices.write_off(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == status
++
++
++def test_write_off_unknown_invoice():
++    with pytest.raises(KeyError):
++        invoices.write_off("INV-nope")

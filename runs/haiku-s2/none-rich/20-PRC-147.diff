@@ -1,0 +1,73 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:58:29
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:58:16
+@@ -1,6 +1,18 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
++
++
++def volume_report():
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 12:58:21
+@@ -0,0 +1,36 @@
++from parcelo import reports
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++
++def _add_customer(customer_id):
++    db.customers[customer_id] = Customer(id=customer_id, name=customer_id)
++
++
++def _add_shipments(customer_id, n):
++    for i in range(n):
++        sid = customer_id + "-s" + str(i)
++        db.shipments[sid] = Shipment(
++            id=sid, customer_id=customer_id, weight_kg=1.0, zone="local"
++        )
++
++
++def test_volume_report_includes_customers_without_shipments():
++    _add_customer("C1")
++    report = reports.volume_report()
++    assert report == {"C1": {"shipments": 0, "tier": "starter"}}
++
++
++def test_volume_report_counts_and_tiers():
++    _add_customer("A")
++    _add_customer("B")
++    _add_customer("C")
++    _add_shipments("A", 3)
++    _add_shipments("B", 10)
++    _add_shipments("C", 50)
++    report = reports.volume_report()
++    assert report == {
++        "A": {"shipments": 3, "tier": "starter"},
++        "B": {"shipments": 10, "tier": "regular"},
++        "C": {"shipments": 50, "tier": "bulk"},
++    }

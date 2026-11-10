@@ -1,0 +1,94 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/disputes.py b/parcelo/disputes.py
+--- a/parcelo/disputes.py	1969-12-31 19:00:00
++++ b/parcelo/disputes.py	2026-11-10 12:58:54
+@@ -0,0 +1,19 @@
++from parcelo import clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Dispute
++from parcelo.store import db
++
++
++def open_dispute(invoice_id, reason):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    if not reason or not reason.strip():
++        raise DomainError("E_BAD_INPUT", "reason is required")
++    dispute = Dispute(
++        id=ids.new_id("dsp"),
++        invoice_id=invoice_id,
++        reason=reason,
++        opened_at=clock.now(),
++    )
++    db.disputes[dispute.id] = dispute
++    return dispute
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-10 12:58:52
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Dispute:
++    id: str
++    invoice_id: str
++    reason: str
++    opened_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-10 12:58:53
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.disputes = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.disputes.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_disputes.py b/tests/test_disputes.py
+--- a/tests/test_disputes.py	1969-12-31 19:00:00
++++ b/tests/test_disputes.py	2026-11-10 12:58:56
+@@ -0,0 +1,36 @@
++import pytest
++
++from parcelo.disputes import open_dispute
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _add_invoice(invoice_id="INV-1"):
++    db.invoices[invoice_id] = Invoice(id=invoice_id, shipment_id="shp_1", amount=10.0)
++    return invoice_id
++
++
++def test_open_dispute_saves_and_returns():
++    inv = _add_invoice()
++    d = open_dispute(inv, "wrong weight")
++    assert d.invoice_id == inv
++    assert d.reason == "wrong weight"
++    assert d.opened_at is not None
++    assert db.disputes[d.id] is d
++
++
++def test_missing_invoice_fails():
++    with pytest.raises(DomainError) as exc:
++        open_dispute("INV-missing", "reason")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert db.disputes == {}
++
++
++@pytest.mark.parametrize("reason", ["", "   ", None])
++def test_empty_reason_fails(reason):
++    inv = _add_invoice()
++    with pytest.raises(DomainError) as exc:
++        open_dispute(inv, reason)
++    assert exc.value.code == "E_BAD_INPUT"
++    assert db.disputes == {}

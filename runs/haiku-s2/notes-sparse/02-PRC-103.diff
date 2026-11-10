@@ -1,0 +1,71 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:51:09
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- rates: quote with fuel surcharge (PRC-103)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 12:51:07
+@@ -1,3 +1,5 @@
++from parcelo.legacy.billing import fuel_surcharge
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +14,17 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    """Return the quote plus the zone's fuel surcharge.
++
++    Raises ValueError for an unknown zone or a non-positive weight, the same
++    as ``quote``. The surcharge percentages come from the legacy
++    ``fuel_surcharge`` so the two cannot drift apart.
++    """
++    base = quote(weight_kg, zone)
++    return {
++        "quote": base,
++        "fuel_surcharge": fuel_surcharge(base, zone),
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-10 12:51:09
+@@ -10,3 +10,29 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_quote_with_surcharge_national():
++    # quote: 9.0 + 1.25 * 2 = 11.5; surcharge: 4% of 11.5 = 0.46
++    result = rates.quote_with_surcharge(2, "national")
++    assert result == {"quote": 11.5, "fuel_surcharge": 0.46}
++
++
++def test_quote_with_surcharge_local_is_zero():
++    result = rates.quote_with_surcharge(2, "local")
++    assert result == {"quote": 7.0, "fuel_surcharge": 0.0}
++
++
++def test_quote_with_surcharge_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.quote_with_surcharge(2, "moon")
++
++
++def test_quote_with_surcharge_zero_weight():
++    with pytest.raises(ValueError):
++        rates.quote_with_surcharge(0, "local")
++
++
++def test_quote_with_surcharge_negative_weight():
++    with pytest.raises(ValueError):
++        rates.quote_with_surcharge(-1, "local")

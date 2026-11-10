@@ -1,0 +1,108 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 13:07:02
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: set credit limit (PRC-150)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-10 13:07:01
+@@ -1,6 +1,8 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -18,6 +20,27 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def set_credit_limit(customer_id, amount):
++    """Set a customer's credit limit and return it as Money.
++
++    Existence is checked before the amount. Zero is a valid limit; negative
++    amounts are rejected with E_BAD_INPUT.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    if isinstance(amount, bool):
++        raise DomainError("E_BAD_INPUT", repr(amount))
++    try:
++        limit = Money.parse(amount)
++    except (ArithmeticError, TypeError, ValueError):
++        raise DomainError("E_BAD_INPUT", repr(amount))
++    if limit.cents < 0:
++        raise DomainError("E_BAD_INPUT", repr(amount))
++    # The Customer.credit_limit field is a legacy float; store the dollar value.
++    db.customers[customer_id].credit_limit = limit.cents / 100
++    return limit
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_credit_limit.py b/tests/unit/test_customers_credit_limit.py
+--- a/tests/unit/test_customers_credit_limit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_credit_limit.py	2026-11-10 13:07:06
+@@ -0,0 +1,53 @@
++import copy
++from decimal import Decimal
++
++import pytest
++
++from parcelo import customers
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def test_sets_limit_and_returns_money():
++    c = customers.add_customer("Acme")
++    result = customers.set_credit_limit(c.id, 1234.5)
++    assert result == Money(123450)
++    assert db.customers[c.id].credit_limit == 1234.5
++
++
++def test_zero_limit_is_allowed():
++    c = customers.add_customer("Acme")
++    result = customers.set_credit_limit(c.id, 0)
++    assert result == Money.zero()
++    assert db.customers[c.id].credit_limit == 0
++
++
++def test_unknown_customer():
++    customers.add_customer("Acme")
++    before = copy.deepcopy(dict(db.customers))
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit("C-missing", 100)
++    assert err.value.code == "E_NOT_FOUND"
++    assert dict(db.customers) == before
++
++
++@pytest.mark.parametrize("amount", [-1, -0.01, "-5", Decimal("-0.01")])
++def test_negative_amount_rejected(amount):
++    c = customers.add_customer("Acme")
++    before = copy.deepcopy(dict(db.customers))
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert db.customers[c.id].credit_limit == 500.0
++    assert dict(db.customers) == before
++
++
++@pytest.mark.parametrize("amount", [True, False, "abc", None, float("nan")])
++def test_bad_amount_rejected(amount):
++    c = customers.add_customer("Acme")
++    before = copy.deepcopy(dict(db.customers))
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert dict(db.customers) == before

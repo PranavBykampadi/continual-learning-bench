@@ -1,0 +1,54 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:52:04
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:51:54
+@@ -7,6 +7,18 @@
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+ 
++def outstanding_by_customer():
++    balances = {customer_id: 0.0 for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None:
++            continue
++        balances[shipment.customer_id] = balances.get(shipment.customer_id, 0.0) + invoice.amount
++    return {customer_id: round(total, 2) for customer_id, total in balances.items()}
++
++
+ def shipments_by_zone():
+     counts = {}
+     for shipment in db.shipments.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 12:51:59
+@@ -0,0 +1,17 @@
++from parcelo import reports
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.store import db
++
++
++def test_outstanding_by_customer_counts_only_open_invoices():
++    db.customers["C1"] = Customer(id="C1", name="A")
++    db.customers["C2"] = Customer(id="C2", name="B")
++    db.shipments["S1"] = Shipment(id="S1", customer_id="C1", weight_kg=1, zone="local")
++    db.shipments["S2"] = Shipment(id="S2", customer_id="C1", weight_kg=1, zone="local")
++    db.shipments["S3"] = Shipment(id="S3", customer_id="C2", weight_kg=1, zone="local")
++    db.invoices["I1"] = Invoice(id="I1", shipment_id="S1", amount=10.0, status="open")
++    db.invoices["I2"] = Invoice(id="I2", shipment_id="S2", amount=5.5, status="open")
++    db.invoices["I3"] = Invoice(id="I3", shipment_id="S2", amount=99.0, status="paid")
++    db.invoices["I4"] = Invoice(id="I4", shipment_id="S3", amount=42.0, status="void")
++
++    assert reports.outstanding_by_customer() == {"C1": 15.5, "C2": 0.0}

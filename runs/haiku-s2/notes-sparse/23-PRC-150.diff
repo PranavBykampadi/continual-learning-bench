@@ -1,0 +1,56 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-10 13:06:56
+@@ -20,6 +20,14 @@
+     return db.customers[customer_id]
+ 
+ 
++def set_credit_limit(customer_id, amount):
++    if amount < 0:
++        raise ValueError("credit limit must not be negative")
++    customer = get_customer(customer_id)
++    customer.credit_limit = amount
++    return customer.credit_limit
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers.py b/tests/test_customers.py
+--- a/tests/test_customers.py	1969-12-31 19:00:00
++++ b/tests/test_customers.py	2026-11-10 13:07:01
+@@ -0,0 +1,34 @@
++import pytest
++
++from parcelo import customers
++from parcelo.store import db
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    customer = customers.add_customer("Acme")
++    assert customer.credit_limit == 500.0
++
++    result = customers.set_credit_limit(customer.id, 1200.0)
++
++    assert result == 1200.0
++    assert db.customers[customer.id].credit_limit == 1200.0
++
++
++def test_set_credit_limit_allows_zero():
++    customer = customers.add_customer("Acme")
++
++    assert customers.set_credit_limit(customer.id, 0) == 0
++    assert db.customers[customer.id].credit_limit == 0
++
++
++def test_set_credit_limit_rejects_negative_amount():
++    customer = customers.add_customer("Acme")
++
++    with pytest.raises(ValueError):
++        customers.set_credit_limit(customer.id, -1)
++    assert db.customers[customer.id].credit_limit == 500.0
++
++
++def test_set_credit_limit_unknown_customer_fails():
++    with pytest.raises(KeyError):
++        customers.set_credit_limit("C_missing", 100.0)
