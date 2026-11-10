@@ -1,0 +1,7 @@
+{
+  "id": "PRC-148",
+  "title": "Open a dispute on an invoice",
+  "snapshot": "b",
+  "conventions": ["ids", "events", "clock", "errors"],
+  "body": "Customers sometimes contest an invoice, and finance wants those tracked.\n\nAdd a new module `parcelo/disputes.py` with `open_dispute(invoice_id, reason)`. It creates a `Dispute` with an id, the invoice id, the reason, and `opened_at` (when it was opened), saves it in a new `disputes` collection on the store, and returns it. Define the `Dispute` dataclass in `parcelo/models.py`, and add the `disputes` collection to `parcelo/store.py` (cleared in `reset()` like the others).\n\nOpening a dispute for an invoice that does not exist must fail. An empty reason must fail too."
+}
