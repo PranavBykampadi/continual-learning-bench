@@ -109,7 +109,29 @@ uv venv .venv && uv pip install --python .venv/bin/python pytest
 
 ## Results
 
-See `results/`.
+Agent: Claude Haiku through the headless `claude` CLI. Two independent runs of the full 24-ticket stream per arm, 288 agent attempts in total. Each cell is the mean of the two runs, with the lower and higher run in brackets. `results/combined.md` has this table, and `results/haiku-s1/` and `results/haiku-s2/` have the per-run tables and curves. Regenerate them with `python -m clbench.report haiku-s1 haiku-s2`.
+
+| arm | compliance | first-try merge | gain vs stateless | repeat-violation rate |
+|---|---|---|---|---|
+| `none` (stateless) | 0.47 [0.46, 0.48] | 0.04 [0.04, 0.04] | 0 | 0.57 [0.53, 0.61] |
+| `placebo` | 0.33 [0.33, 0.34] | 0.02 [0.00, 0.04] | -0.14 [-0.16, -0.12] | 0.69 [0.66, 0.71] |
+| `notes`, sparse feedback | 0.50 [0.38, 0.61] | 0.04 [0.00, 0.08] | +0.02 [-0.08, +0.12] | 0.63 [0.61, 0.64] |
+| `notes`, rich feedback | 0.89 [0.88, 0.90] | 0.67 [0.62, 0.71] | +0.41 [+0.39, +0.44] | 0.06 [0.04, 0.08] |
+| `history`, rich feedback | 0.92 [0.92, 0.92] | 0.79 [0.75, 0.83] | +0.45 [+0.43, +0.46] | 0.00 [0.00, 0.00] |
+| `oracle` (handbook) | 0.99 [0.98, 1.00] | 0.94 [0.88, 1.00] | +0.52 [+0.49, +0.54] | 0.00 [0.00, 0.00] |
+
+![learning curve, run 1](results/haiku-s1/curve.svg)
+
+What the two runs show:
+
+- **The benchmark separates learners.** The stateless agent follows 47% of the rules and merges 4% of tickets on the first try. The handbook takes the same agent to 99% and 94%. That 52-point gap is the room a learner has.
+- **With review comments, the agent learns most of the handbook on its own.** Self-written notes close about 80% of the gap to the oracle, and raw feedback history about 86%. The first time the agent meets a rule it follows it 33% to 44% of the time. From the second meeting on it follows it 89% of the time or more.
+- **Without the explanation, the agent learns nothing measurable.** With only "merged" or "not merged", the notes arm lands at +0.02 over stateless, and the two runs disagree on the sign (-0.08 and +0.12). The agent fills its notes with guesses about why it was rejected.
+- **The rule change shows the same split.** After the migration, both rich-feedback arms break the new `events` rule once, get one review comment, and then follow it (7 of 7 for `history` in both runs, 7 of 7 and 5 of 7 for `notes`). The sparse arm follows it 0 times in 16 tries.
+- **Plain history beats curated notes at this length.** At 24 tickets the full feedback log is about 3,700 characters, so nothing forces compression yet. A longer stream is needed to see where the log stops fitting.
+- **The placebo arm scored below stateless in both runs** (-0.16 and -0.12). Extra context that carries no rules did not help. Why it hurt is not established. One guess is that the line "keep the change small" discourages changelog entries and new test files.
+
+What limits these numbers: the run-to-run spread on compliance is 0.03 or less for every arm except sparse notes, where it is 0.23. Every attempt ran to completion with no CLI error, and CI pass rate is 0.92 or higher in every arm, so the gaps come from rule-following and not from failed runs. Two runs give a range, not a confidence interval.
 
 ## Limits
 
