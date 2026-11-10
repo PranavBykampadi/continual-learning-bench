@@ -1,0 +1,56 @@
+[
+  {
+    "id": "money",
+    "snapshots": ["a", "b"],
+    "rule": "New code represents currency amounts as `parcelo.money.Money` (integer cents). Never return or store a float amount from new functions. Use `Money.parse(...)` to convert values that come from older float code.",
+    "review_comment": "This returns a raw float for a currency amount. New code has to use `Money` from `parcelo.money` (wrap older float values with `Money.parse`). We stopped passing floats around for money after the rounding incident."
+  },
+  {
+    "id": "clock",
+    "snapshots": ["a", "b"],
+    "rule": "Read the current time only through `parcelo.clock.now()`. Never call `datetime.now()`, `datetime.utcnow()` or `time.time()` in new code.",
+    "review_comment": "Please don't call `datetime.now()`/`utcnow()` directly. Use `clock.now()` from `parcelo.clock` so times are UTC-aware and tests can freeze them."
+  },
+  {
+    "id": "errors",
+    "snapshots": ["a", "b"],
+    "rule": "New code signals expected failures by raising `parcelo.errors.DomainError` with a code from `errors.CODES` (add a new `E_...` code to `CODES` if none fits). Never raise ValueError, KeyError or a bare Exception for domain failures.",
+    "review_comment": "New code shouldn't raise `ValueError`/`KeyError` for domain failures. Raise `DomainError` from `parcelo.errors` with a registered `E_...` code (add one to `CODES` if nothing fits), the API layer maps those codes to responses."
+  },
+  {
+    "id": "audit",
+    "snapshots": ["a"],
+    "rule": "Every new function that changes stored state calls `parcelo.audit.record(action, entity_id, ...)` after the change, with the id of the entity it changed.",
+    "review_comment": "This changes stored state without an audit entry. Every mutation needs `audit.record(action, entity_id, ...)` with the id of the entity you changed, compliance reads that log."
+  },
+  {
+    "id": "events",
+    "snapshots": ["b"],
+    "rule": "Every new function that changes stored state calls `parcelo.events.emit(name, entity_id, ...)` after the change. Do not call `audit.record` in new code, the audit log is now fed from the events outbox.",
+    "review_comment": "We moved off `audit.record` last sprint. New mutations must call `events.emit(name, entity_id, ...)` from `parcelo.events` instead, and must not call `audit.record` directly anymore (the audit log is fed from the outbox)."
+  },
+  {
+    "id": "ids",
+    "snapshots": ["a", "b"],
+    "rule": "Create ids for new entities with `parcelo.ids.new_id(prefix)` using a short lowercase prefix. Never use `uuid` or hand-built ids in new code.",
+    "review_comment": "Don't build ids with `uuid` or by hand. Use `ids.new_id(\"<prefix>\")` from `parcelo.ids`, support tooling depends on the `prefix_000001` format."
+  },
+  {
+    "id": "changelog",
+    "snapshots": ["a", "b"],
+    "rule": "Every ticket adds one bullet under `## Unreleased` in CHANGELOG.md, in the form `- area: what changed (TICKET-ID)`.",
+    "review_comment": "Missing changelog entry. Every ticket needs a bullet under `## Unreleased` in CHANGELOG.md that ends with the ticket id in parentheses, like `- invoices: add void (PRC-123)`."
+  },
+  {
+    "id": "tests",
+    "snapshots": ["a", "b"],
+    "rule": "Every ticket adds tests for the new behavior in a new file under `tests/unit/`. Do not add tests to the top-level `tests/` directory, that suite is frozen.",
+    "review_comment": "I don't see new tests in the right place. Every ticket needs a new test file under `tests/unit/` covering the change. The top-level `tests/` files are frozen, please don't add tests there."
+  },
+  {
+    "id": "no_legacy",
+    "snapshots": ["a", "b"],
+    "rule": "Never import from `parcelo.legacy` in new code, that package is being deleted. Reimplement what you need next to the new code.",
+    "review_comment": "Please don't import from `parcelo.legacy`. That package is scheduled for deletion, so new code must not depend on it. Reimplement the small piece you need next to your change."
+  }
+]
