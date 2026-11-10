@@ -4,7 +4,7 @@ A prototype benchmark that asks one question: when a coding agent works inside o
 
 The agent works through a stream of 24 tickets in a small private codebase. After each ticket it gets what a new hire gets: a CI result and code review comments. The team has rules that nobody wrote down. The benchmark scores how fast the agent stops breaking them.
 
-Status: prototype. One model, one seed. Read the numbers as a demonstration that the benchmark separates learners, not as a ranking.
+Status: prototype. One model, two runs per arm. Read the numbers as a demonstration that the benchmark separates learners, not as a ranking.
 
 ## Why this benchmark
 
@@ -135,7 +135,7 @@ What limits these numbers: the run-to-run spread on compliance is 0.03 or less f
 
 ## Limits
 
-- **One seed, 24 tickets.** A whole stream is one sample. The intervals come from resampling tickets and do not cover run-to-run variance.
+- **Two runs, 24 tickets, one model.** A whole stream is one sample, so there are two samples per arm. The brackets are a range, not a confidence interval.
 - **The codebase does not grow.** Every ticket starts from the same snapshot (one of two). The agent's own earlier changes do not persist, so the benchmark does not measure error build-up.
 - **The reviewer is a script.** It always catches a broken rule and always explains it well. Real reviewers miss things and most agent PRs get no comment. The `sparse` mode is the first step toward that.
 - **The rules are synthetic.** Nine clean rules are easier to learn than the taste of a real team.
