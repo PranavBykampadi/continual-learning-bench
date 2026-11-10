@@ -171,6 +171,20 @@ def render_combined(run_names):
             f"{cell([repeat_violation_rate(r)[0] for r in per_run])} | "
             f"{cell([mean(a.feedback.compliance for a in thirds(r)[2]) for r in per_run])} |"
         )
+    rules = sorted({rule for run in runs for attempts in run.values() for rule in exposures(attempts)})
+    lines += ["", "## Compliance per rule, all runs pooled", "",
+              "| arm | " + " | ".join(f"`{r}`" for r in rules) + " |", "|---|" + "---|" * len(rules)]
+    for name in runs[0]:
+        pooled = defaultdict(list)
+        for run in runs:
+            for rule, outcomes in exposures(run.get(name, [])).items():
+                pooled[rule] += outcomes
+        lines.append(f"| {name} | " + " | ".join(f"{mean(pooled[r]):.2f}" if pooled[r] else "n/a" for r in rules) + " |")
+    lines += ["", "## First time the agent meets each rule, all runs pooled", "",
+              "| arm | followed on first exposure |", "|---|---|"]
+    for name in runs[0]:
+        firsts = [o[0] for run in runs for o in exposures(run.get(name, [])).values()]
+        lines.append(f"| {name} | {mean(firsts):.2f} (n={len(firsts)}) |")
     text = "\n".join(lines) + "\n"
     (ROOT / "results" / "combined.md").write_text(text)
     return text
