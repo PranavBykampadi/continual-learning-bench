@@ -1,0 +1,7 @@
+{
+  "id": "PRC-141",
+  "title": "Reassign a shipment to another customer",
+  "snapshot": "b",
+  "conventions": ["events", "errors", "changelog", "tests"],
+  "body": "Support sometimes books a shipment under the wrong customer.\n\nAdd `reassign_shipment(shipment_id, new_customer_id)` to `parcelo/shipments.py`. It changes the shipment's customer to `new_customer_id` and returns the shipment.\n\nReassigning a shipment that does not exist must fail. So must reassigning to a customer that does not exist, or reassigning a shipment that has already been delivered."
+}
