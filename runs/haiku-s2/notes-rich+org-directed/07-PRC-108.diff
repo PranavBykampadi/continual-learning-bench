@@ -1,0 +1,126 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:52:47
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- reports: outstanding balances by customer (PRC-108)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 14:52:46
+@@ -1,6 +1,29 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Return the total open-invoice balance for every customer.
++
++    Only invoices with status "open" count; paid and void invoices are
++    ignored. Every customer is included, with a zero balance if they have
++    no open invoices. Amounts are Money. Invoice amounts stored as floats
++    are wrapped with Money.parse as they are read. This is read-only: no
++    state is changed and no audit record is written.
++
++    Returns:
++        dict: maps customer id to Money owed on open invoices.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        amount = Money.parse(invoice.amount)
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + amount
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_outstanding.py b/tests/unit/test_reports_outstanding.py
+--- a/tests/unit/test_reports_outstanding.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_outstanding.py	2026-11-10 14:52:52
+@@ -0,0 +1,78 @@
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _invoice_for(customer, zone="local", weight=2.0):
++    shipment = shipments.create_shipment(customer.id, weight, zone)
++    return invoices.issue_invoice(shipment.id)
++
++
++def test_sums_open_invoices_per_customer():
++    ann = customers.add_customer("Ann")
++    bob = customers.add_customer("Bob")
++    a1 = _invoice_for(ann)
++    a2 = _invoice_for(ann)
++    b1 = _invoice_for(bob)
++
++    result = reports.outstanding_by_customer()
++
++    assert result[ann.id] == Money.parse(a1.amount) + Money.parse(a2.amount)
++    assert result[bob.id] == Money.parse(b1.amount)
++
++
++def test_values_are_money_not_float():
++    ann = customers.add_customer("Ann")
++    _invoice_for(ann)
++
++    result = reports.outstanding_by_customer()
++
++    assert isinstance(result[ann.id], Money)
++
++
++def test_paid_and_void_invoices_are_excluded():
++    ann = customers.add_customer("Ann")
++    paid = _invoice_for(ann)
++    voided = _invoice_for(ann)
++    still_open = _invoice_for(ann)
++    invoices.mark_paid(paid.id)
++    voided.status = "void"
++
++    result = reports.outstanding_by_customer()
++
++    assert result[ann.id] == Money.parse(still_open.amount)
++
++
++def test_customer_with_no_open_invoices_is_zero():
++    ann = customers.add_customer("Ann")
++    bob = customers.add_customer("Bob")
++    _invoice_for(bob)
++    invoices.mark_paid(next(iter(db.invoices)))
++
++    result = reports.outstanding_by_customer()
++
++    assert result[ann.id] == Money.zero()
++    assert ann.id in result
++
++
++def test_float_amounts_are_summed_exactly():
++    ann = customers.add_customer("Ann")
++    first = _invoice_for(ann)
++    second = _invoice_for(ann)
++    first.amount = 0.1
++    second.amount = 0.2
++
++    result = reports.outstanding_by_customer()
++
++    assert result[ann.id] == Money(30)
++
++
++def test_is_read_only():
++    ann = customers.add_customer("Ann")
++    inv = _invoice_for(ann)
++    audit_len = len(audit.LOG)
++
++    reports.outstanding_by_customer()
++
++    assert inv.status == "open"
++    assert len(audit.LOG) == audit_len

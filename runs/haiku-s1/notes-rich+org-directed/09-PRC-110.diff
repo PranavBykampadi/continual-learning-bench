@@ -1,0 +1,79 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:18:39
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- rates: add gold tier discount on quotes (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 14:18:34
+@@ -1,4 +1,10 @@
++from decimal import Decimal
++
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
++GOLD_DISCOUNT_PCT = Decimal("10")  # PRC-110: 10% off for gold tier
++TIERS = ("standard", "gold")
+ PER_KG = 1.25
+ 
+ 
+@@ -12,3 +18,16 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    """Quote with the tier discount applied. Returns Money.
++
++    Unknown zones fail via quote(); unknown tiers raise ValueError.
++    """
++    if tier not in TIERS:
++        raise ValueError("unknown tier: %s" % tier)
++    regular = Money.parse(quote(weight_kg, zone))
++    if tier == "gold":
++        return regular.scale(1 - GOLD_DISCOUNT_PCT / 100)
++    return regular
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_prc110_gold_quote.py b/tests/unit/test_prc110_gold_quote.py
+--- a/tests/unit/test_prc110_gold_quote.py	1969-12-31 19:00:00
++++ b/tests/unit/test_prc110_gold_quote.py	2026-11-10 14:18:38
+@@ -0,0 +1,33 @@
++import pytest
++
++from parcelo import rates
++from parcelo.money import Money
++
++
++def test_gold_gets_ten_percent_off():
++    # regular quote for 2 kg local is 7.00 -> 6.30 for gold
++    result = rates.discounted_quote(2, "local", "gold")
++    assert isinstance(result, Money)
++    assert result == Money(630)
++
++
++def test_standard_has_no_discount():
++    result = rates.discounted_quote(2, "local", "standard")
++    assert isinstance(result, Money)
++    assert result == Money(700)
++
++
++def test_gold_rounds_half_up_to_cent():
++    # regular quote 4.50 + 1.25 * 1.0 = 5.75 -> 5.175 -> 5.18 (half up)
++    result = rates.discounted_quote(1, "local", "gold")
++    assert result == Money(518)
++
++
++def test_unknown_zone_fails():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "moon", "gold")
++
++
++def test_unknown_tier_fails():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "local", "platinum")

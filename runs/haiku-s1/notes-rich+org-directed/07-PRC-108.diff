@@ -1,0 +1,114 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:16:47
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balance by customer from open invoices (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 14:16:41
+@@ -1,5 +1,7 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
++from parcelo.shipments import get_shipment
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +24,28 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer() -> dict[str, Money]:
++    """Return the total of open invoices owed by each customer.
++
++    Only invoices with status "open" count. Paid and void invoices are excluded.
++    Every customer appears in the result; a customer with no open invoices maps to zero.
++
++    Args:
++        None.
++
++    Returns:
++        dict[str, Money]: Customer id mapped to the sum of that customer's open invoice amounts.
++
++    Raises:
++        DomainError: E_NOT_FOUND if an invoice refers to a shipment that does not exist.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = get_shipment(invoice.shipment_id)
++        current = totals.get(shipment.customer_id, Money.zero())
++        totals[shipment.customer_id] = current + Money.parse(invoice.amount)
++    return totals
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 14:16:50
+@@ -0,0 +1,59 @@
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.money import Money
++
++
++def test_outstanding_empty_when_no_customers():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_outstanding_sums_open_invoices_per_customer():
++    c = customers.add_customer("Acme")
++    s1 = shipments.create_shipment(c.id, 2, "local")  # quote 7.00
++    s2 = shipments.create_shipment(c.id, 2, "local")  # quote 7.00
++    invoices.issue_invoice(s1.id)
++    invoices.issue_invoice(s2.id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {c.id: Money.parse(14)}
++    assert isinstance(result[c.id], Money)
++
++
++def test_outstanding_excludes_paid_and_void_invoices():
++    c = customers.add_customer("Acme")
++    paid_ship = shipments.create_shipment(c.id, 2, "local")
++    void_ship = shipments.create_shipment(c.id, 2, "local")
++    open_ship = shipments.create_shipment(c.id, 1, "local")  # quote 5.75
++    paid = invoices.issue_invoice(paid_ship.id)
++    void = invoices.issue_invoice(void_ship.id)
++    invoices.issue_invoice(open_ship.id)
++    invoices.mark_paid(paid.id)
++    void.status = "void"
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {c.id: Money.parse(5.75)}
++
++
++def test_outstanding_includes_customers_with_nothing_owed():
++    owing = customers.add_customer("Owes")
++    settled = customers.add_customer("Settled")
++    s = shipments.create_shipment(owing.id, 2, "local")
++    paid_ship = shipments.create_shipment(settled.id, 2, "local")
++    invoices.issue_invoice(s.id)
++    invoices.mark_paid(invoices.issue_invoice(paid_ship.id).id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {owing.id: Money.parse(7), settled.id: Money.zero()}
++
++
++def test_outstanding_does_not_write_audit_entries():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++    before = len(audit.LOG)
++
++    reports.outstanding_by_customer()
++
++    assert len(audit.LOG) == before

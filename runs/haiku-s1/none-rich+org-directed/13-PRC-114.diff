@@ -1,0 +1,98 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 14:20:11
+@@ -1,5 +1,7 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.legacy.billing import days_between
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +14,31 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def _as_utc(moment):
++    # Some invoices carry naive UTC datetimes (see invoices.issue_invoice).
++    # Tag them so they can be compared with clock.now().
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
++def aging_report():
++    now = clock.now()
++    buckets = {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        age = days_between(_as_utc(invoice.issued_at), now)
++        if age <= 30:
++            key = "0-30"
++        elif age <= 60:
++            key = "31-60"
++        else:
++            key = "60+"
++        buckets[key] += invoice.amount
++    return {key: round(total, 2) for key, total in buckets.items()}
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 14:20:14
+@@ -0,0 +1,50 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import clock, reports
++from parcelo.models import Invoice
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
++
++
++def _add(invoice_id, amount, days_old, status="open", naive=False):
++    issued = NOW - timedelta(days=days_old)
++    if naive:
++        issued = issued.replace(tzinfo=None)
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="S",
++        amount=amount,
++        status=status,
++        issued_at=issued,
++    )
++
++
++def test_aging_report_empty():
++    clock.set_fixed(NOW)
++    assert reports.aging_report() == {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++
++
++def test_aging_report_buckets():
++    clock.set_fixed(NOW)
++    _add("a", 10.0, 0)
++    _add("b", 5.5, 30)
++    _add("c", 7.0, 31)
++    _add("d", 2.0, 60)
++    _add("e", 1.0, 61)
++    _add("f", 100.0, 400)
++    assert reports.aging_report() == {"0-30": 15.5, "31-60": 9.0, "60+": 101.0}
++
++
++def test_aging_report_skips_paid():
++    clock.set_fixed(NOW)
++    _add("a", 10.0, 5, status="paid")
++    _add("b", 3.0, 45)
++    assert reports.aging_report() == {"0-30": 0.0, "31-60": 3.0, "60+": 0.0}
++
++
++def test_aging_report_accepts_naive_utc_issue_dates():
++    clock.set_fixed(NOW)
++    _add("a", 4.0, 10, naive=True)
++    _add("b", 6.0, 90, naive=True)
++    assert reports.aging_report() == {"0-30": 4.0, "31-60": 0.0, "60+": 6.0}

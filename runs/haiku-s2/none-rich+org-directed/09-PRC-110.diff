@@ -1,0 +1,86 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:52:31
+@@ -3,7 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
+-- Added gold tier
++- Added gold tier: 10% off shipping quotes (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 14:52:28
+@@ -1,5 +1,8 @@
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++TIER_FACTOR = {"standard": 1.0, "gold": 0.9}
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +15,23 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg: float, zone: str, tier: str) -> Money:
++    """Return the quote for a weight and zone with the tier discount applied.
++
++    Args:
++        weight_kg: Parcel weight in kilograms. Must be positive.
++        zone: One of the keys in ZONE_BASE.
++        tier: "standard" (no discount) or "gold" (10% off).
++
++    Returns:
++        The discounted quote as Money, rounded half up to the cent.
++
++    Raises:
++        ValueError: If the zone, weight or tier is invalid.
++    """
++    if tier not in TIER_FACTOR:
++        raise ValueError(f"unknown tier: {tier}")
++    regular = Money.parse(quote(weight_kg, zone))
++    return regular.scale(TIER_FACTOR[tier])
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-10 14:52:35
+@@ -1,6 +1,7 @@
+ import pytest
+ 
+ from parcelo import rates
++from parcelo.money import Money
+ 
+ 
+ def test_quote_local():
+@@ -10,3 +11,26 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_discounted_quote_standard_is_regular_quote():
++    assert rates.discounted_quote(2, "local", "standard") == Money(700)
++
++
++def test_discounted_quote_gold_takes_10_percent_off():
++    assert rates.discounted_quote(2, "local", "gold") == Money(630)
++
++
++def test_discounted_quote_gold_rounds_half_up_to_cent():
++    # quote(3, "local") is 8.25; 8.25 * 0.9 = 7.425 -> 7.43
++    assert rates.discounted_quote(3, "local", "gold") == Money(743)
++
++
++def test_discounted_quote_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "moon", "gold")
++
++
++def test_discounted_quote_unknown_tier():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "local", "platinum")

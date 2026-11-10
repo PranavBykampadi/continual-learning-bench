@@ -1,0 +1,140 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 15:06:50
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- invoices: write off open invoices (PRC-146)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-10 15:06:43
+@@ -1,7 +1,10 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock, events
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +35,31 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def write_off(invoice_id):
++    """Write off an open invoice that will never be collected.
++
++    Args:
++        invoice_id: Id of the invoice to write off.
++
++    Returns:
++        Money: The amount that was written off.
++
++    Raises:
++        DomainError: E_BAD_INPUT if invoice_id is missing, blank or not a string;
++            E_NOT_FOUND if no invoice has that id;
++            E_BAD_STATE if the invoice is not open.
++    """
++    if invoice_id is None or not isinstance(invoice_id, str) or not invoice_id.strip():
++        raise DomainError("E_BAD_INPUT", "invoice_id")
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", invoice.status)
++    amount = Money.parse(invoice.amount)
++    invoice.status = "written_off"
++    invoice.written_off_at = clock.now()
++    events.emit("invoice.written_off", invoice.id, cents=amount.cents)
++    return amount
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-10 15:06:40
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    written_off_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_write_off.py b/tests/unit/test_invoices_write_off.py
+--- a/tests/unit/test_invoices_write_off.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_write_off.py	2026-11-10 15:06:54
+@@ -0,0 +1,71 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, invoices, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++def _open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++def test_write_off_open_invoice_sets_status_and_timestamp():
++    now = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
++    clock.set_fixed(now)
++    inv = _open_invoice()
++    amount = invoices.write_off(inv.id)
++    assert inv.status == "written_off"
++    assert inv.written_off_at == now
++    assert amount == Money.parse(7.0)
++    assert amount.cents == 700
++
++
++def test_write_off_emits_event():
++    inv = _open_invoice()
++    events.OUTBOX.clear()
++    invoices.write_off(inv.id)
++    assert [e["name"] for e in events.OUTBOX] == ["invoice.written_off"]
++    assert events.OUTBOX[0]["entity_id"] == inv.id
++
++
++def test_write_off_paid_invoice_is_bad_state():
++    inv = _open_invoice()
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.write_off(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert "paid" in exc.value.message
++    assert inv.status == "paid"
++
++
++def test_write_off_twice_is_bad_state():
++    inv = _open_invoice()
++    invoices.write_off(inv.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.write_off(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert "written_off" in exc.value.message
++
++
++def test_write_off_unknown_invoice_is_not_found():
++    with pytest.raises(DomainError) as exc:
++        invoices.write_off("INV-missing")
++    assert exc.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize("bad", [None, "", "   ", 42])
++def test_write_off_bad_input(bad):
++    with pytest.raises(DomainError) as exc:
++        invoices.write_off(bad)
++    assert exc.value.code == "E_BAD_INPUT"
++
++
++def test_failed_write_off_does_not_emit():
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError):
++        invoices.write_off("INV-missing")
++    assert events.OUTBOX == []

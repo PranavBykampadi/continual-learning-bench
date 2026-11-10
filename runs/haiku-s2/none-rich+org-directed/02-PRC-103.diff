@@ -1,0 +1,135 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:46:50
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- rates: quote with fuel surcharge (PRC-103)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 14:46:46
+@@ -1,7 +1,39 @@
++from dataclasses import dataclass
++from decimal import Decimal
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++# Fuel surcharge percent per zone. Same values as parcelo.legacy.billing.fuel_surcharge,
++# reimplemented here because new code must not import from parcelo.legacy.
++FUEL_SURCHARGE_PCT = {
++    "local": Decimal("0"),
++    "national": Decimal("4.0"),
++    "international": Decimal("9.5"),
++}
+ 
++
++@dataclass(frozen=True)
++class QuoteWithSurcharge:
++    """A quote split into base price and fuel surcharge, both as Money.
++
++    Attributes:
++        quote: The normal quote for the weight and zone.
++        surcharge: The fuel surcharge for the zone, rounded half up to the cent.
++    """
++
++    quote: Money
++    surcharge: Money
++
++    @property
++    def total(self) -> Money:
++        """Quote plus surcharge."""
++        return self.quote + self.surcharge
++
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+         raise ValueError("unknown zone: %s" % zone)
+@@ -12,3 +44,28 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg: float, zone: str) -> QuoteWithSurcharge:
++    """Price a shipment and add the fuel surcharge for its zone.
++
++    Args:
++        weight_kg: Shipment weight in kilograms. Must be positive.
++        zone: One of "local", "national" or "international".
++
++    Returns:
++        A QuoteWithSurcharge with the base quote and the surcharge as Money.
++
++    Raises:
++        DomainError: E_BAD_ZONE if the zone is unknown, E_BAD_WEIGHT if the
++            weight is zero or negative.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", str(weight_kg))
++    # quote() returns a float; wrap it at the edge as the team decided.
++    base = Money.parse(quote(weight_kg, zone))
++    pct = FUEL_SURCHARGE_PCT[zone]
++    surcharge = base.scale(pct / Decimal(100))
++    return QuoteWithSurcharge(quote=base, surcharge=surcharge)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-10 14:46:49
+@@ -1,6 +1,8 @@
+ import pytest
+ 
+ from parcelo import rates
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ 
+ 
+ def test_quote_local():
+@@ -10,3 +12,39 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_quote_with_surcharge_local_has_no_surcharge():
++    result = rates.quote_with_surcharge(2, "local")
++    assert result.quote == Money(700)
++    assert result.surcharge == Money(0)
++    assert result.total == Money(700)
++
++
++def test_quote_with_surcharge_national():
++    # base 9.00 + 1.25 * 2 = 11.50; 4% = 0.46
++    result = rates.quote_with_surcharge(2, "national")
++    assert result.quote == Money(1150)
++    assert result.surcharge == Money(46)
++    assert result.total == Money(1196)
++
++
++def test_quote_with_surcharge_international_rounds_half_up():
++    # base 24.00 + 1.25 = 25.25; 9.5% = 2.39875 -> 2.40
++    result = rates.quote_with_surcharge(1, "international")
++    assert result.quote == Money(2525)
++    assert result.surcharge == Money(240)
++    assert result.total == Money(2765)
++
++
++def test_quote_with_surcharge_unknown_zone():
++    with pytest.raises(DomainError) as exc:
++        rates.quote_with_surcharge(2, "moon")
++    assert exc.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("weight", [0, -1, -0.5])
++def test_quote_with_surcharge_bad_weight(weight):
++    with pytest.raises(DomainError) as exc:
++        rates.quote_with_surcharge(weight, "national")
++    assert exc.value.code == "E_BAD_WEIGHT"

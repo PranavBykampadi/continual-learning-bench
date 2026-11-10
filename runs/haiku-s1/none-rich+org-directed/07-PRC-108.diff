@@ -1,0 +1,76 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 14:15:41
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: outstanding balances by customer (PRC-108)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 14:15:30
+@@ -1,6 +1,27 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Return the total open (unpaid, non-void) invoice amount per customer.
++
++    Amounts are summed as integer-cent `Money` values. Invoice amounts are
++    still stored as floats, so each one is wrapped with `Money.parse` on read.
++
++    Returns:
++        dict[str, Money]: Maps customer id to the sum of that customer's open
++        invoices. Customers with no open invoices are not included.
++    """
++    totals = {}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        amount = Money.parse(invoice.amount)
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + amount
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 14:15:38
+@@ -0,0 +1,30 @@
++from parcelo import reports
++from parcelo.models import Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _invoice(inv_id, shipment_id, amount, status="open"):
++    db.invoices[inv_id] = Invoice(id=inv_id, shipment_id=shipment_id, amount=amount, status=status)
++
++
++def test_outstanding_by_customer_sums_open_invoices_only():
++    db.shipments["S1"] = Shipment(id="S1", customer_id="C1", weight_kg=1, zone="local")
++    db.shipments["S2"] = Shipment(id="S2", customer_id="C1", weight_kg=1, zone="local")
++    db.shipments["S3"] = Shipment(id="S3", customer_id="C2", weight_kg=1, zone="local")
++    _invoice("I1", "S1", 0.1)
++    _invoice("I2", "S1", 0.2)
++    _invoice("I3", "S2", 9.0, status="paid")
++    _invoice("I4", "S2", 4.0, status="void")
++    _invoice("I5", "S3", 3.5)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {"C1": Money(30), "C2": Money(350)}
++
++
++def test_outstanding_by_customer_empty_when_nothing_open():
++    db.shipments["S1"] = Shipment(id="S1", customer_id="C1", weight_kg=1, zone="local")
++    _invoice("I1", "S1", 5.0, status="paid")
++
++    assert reports.outstanding_by_customer() == {}

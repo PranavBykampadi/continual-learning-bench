@@ -1,0 +1,67 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 14:19:11
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- Standard customers can be upgraded to gold without being recreated
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-10 14:19:10
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,16 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if customer.tier != "standard":
++        raise DomainError("E_BAD_STATE", f"customer {customer_id} is already {customer.tier}")
++    customer.tier = "gold"
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-10 14:19:16
+@@ -0,0 +1,25 @@
++import pytest
++
++from parcelo import customers, store
++from parcelo.errors import DomainError
++
++
++def test_upgrade_standard_to_gold_keeps_customer():
++    c = customers.add_customer("Acme")
++    upgraded = customers.upgrade_tier(c.id)
++    assert upgraded is c
++    assert upgraded.tier == "gold"
++    assert store.db.customers[c.id].tier == "gold"
++
++
++def test_upgrade_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.upgrade_tier("C000000")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_upgrade_already_gold_fails():
++    c = customers.add_customer("Acme", tier="gold")
++    with pytest.raises(DomainError) as err:
++        customers.upgrade_tier(c.id)
++    assert err.value.code == "E_BAD_STATE"
