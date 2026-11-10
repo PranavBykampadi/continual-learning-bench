@@ -1,0 +1,7 @@
+{
+  "id": "PRC-142",
+  "title": "Reopen a paid invoice",
+  "snapshot": "b",
+  "conventions": ["events", "errors", "clock", "changelog"],
+  "body": "Finance sometimes marks an invoice paid by mistake and needs to undo it.\n\nAdd `reopen_invoice(invoice_id)` to `parcelo/invoices.py`. It sets a paid invoice back to \"open\", clears its `paid_at`, and records when it was reopened in a new `reopened_at` field on the invoice (add the field to the `Invoice` model in `parcelo/models.py`). It returns the invoice.\n\nReopening an invoice that does not exist must fail. So must reopening one that is not paid."
+}
