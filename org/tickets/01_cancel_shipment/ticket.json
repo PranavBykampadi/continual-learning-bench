@@ -1,0 +1,7 @@
+{
+  "id": "PRC-101",
+  "title": "Cancel a shipment",
+  "snapshot": "a",
+  "conventions": ["errors", "audit", "changelog", "tests"],
+  "body": "Support needs to cancel shipments.\n\nAdd `cancel_shipment(shipment_id, reason)` to `parcelo/shipments.py`. It sets the shipment status to \"cancelled\", appends the reason to the shipment's notes, and returns the shipment.\n\nCancelling a shipment that does not exist must fail. Cancelling one that is already cancelled or delivered must fail too."
+}
