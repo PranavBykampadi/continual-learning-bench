@@ -1,0 +1,12 @@
+{
+  "id": "PRC-104",
+  "title": "Deactivate a customer",
+  "snapshot": "a",
+  "conventions": [
+    "errors",
+    "audit",
+    "changelog",
+    "tests"
+  ],
+  "body": "Account management needs a way to switch off customers who have left.\n\nAdd `deactivate_customer(customer_id)` to `parcelo/customers.py`. It sets the customer's `active` flag to False and returns the customer.\n\nDeactivating a customer that does not exist must fail. Deactivating one that is already inactive must fail too."
+}
