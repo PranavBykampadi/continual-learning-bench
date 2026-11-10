@@ -17,14 +17,18 @@ def overlay(source, target):
     shutil.copytree(source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*IGNORED))
 
 
+_built = {}
+
+
 def snapshot_dir(name):
-    cached = ROOT / ".cache" / "snapshots" / name
-    if cached.exists():
-        shutil.rmtree(cached)
-    overlay(ORG / "seed", cached)
-    for layer in SNAPSHOT_OVERLAYS[name]:
-        overlay(ORG / layer, cached)
-    return cached
+    """Each process builds its own copy, so parallel arms never share a directory."""
+    if name not in _built:
+        target = Path(tempfile.mkdtemp(prefix=f"clb-snapshot-{name}-")) / "parcelo"
+        overlay(ORG / "seed", target)
+        for layer in SNAPSHOT_OVERLAYS[name]:
+            overlay(ORG / layer, target)
+        _built[name] = target
+    return _built[name]
 
 
 def new_workspace(snapshot):
