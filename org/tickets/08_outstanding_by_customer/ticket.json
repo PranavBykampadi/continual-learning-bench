@@ -1,0 +1,11 @@
+{
+  "id": "PRC-108",
+  "title": "Outstanding balances report",
+  "snapshot": "a",
+  "conventions": [
+    "money",
+    "changelog",
+    "tests"
+  ],
+  "body": "Finance wants one report that shows what every customer still owes.\n\nAdd `outstanding_by_customer()` to `parcelo/reports.py`. It returns a dict that maps each customer id to the total amount of that customer's open invoices. Paid and void invoices do not count."
+}
