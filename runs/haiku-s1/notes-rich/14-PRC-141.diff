@@ -1,0 +1,119 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:40:22
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- shipments: reassign shipment to another customer (PRC-141)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-10 12:40:22
+@@ -1,4 +1,4 @@
+-from parcelo import clock, events, ids
++from parcelo import audit, clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+ from parcelo.rates import ZONE_BASE
+@@ -28,3 +28,29 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def reassign_shipment(shipment_id, new_customer_id):
++    """Move a shipment to another customer (e.g. booked under the wrong account).
++
++    Checks, in order: input, shipment existence, customer existence, then
++    state (delivered shipments cannot be reassigned). Records an audit entry.
++    """
++    if not shipment_id or not new_customer_id:
++        raise DomainError("E_BAD_INPUT", "shipment_id and new_customer_id required")
++    if shipment_id not in db.shipments:
++        raise DomainError("E_NOT_FOUND", shipment_id)
++    if new_customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", new_customer_id)
++    shipment = db.shipments[shipment_id]
++    if shipment.status == "delivered" or shipment.delivered_at is not None:
++        raise DomainError("E_BAD_STATE", shipment_id)
++    previous_customer_id = shipment.customer_id
++    shipment.customer_id = new_customer_id
++    audit.record(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=previous_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reassign_shipment.py b/tests/unit/test_reassign_shipment.py
+--- a/tests/unit/test_reassign_shipment.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reassign_shipment.py	2026-11-10 12:40:25
+@@ -0,0 +1,65 @@
++import pytest
++
++from parcelo import audit, clock, customers, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _setup():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    s = shipments.create_shipment(a.id, 2.0, "national")
++    return a, b, s
++
++
++def test_reassign_changes_customer_and_returns_shipment():
++    a, b, s = _setup()
++    result = shipments.reassign_shipment(s.id, b.id)
++    assert result is s
++    assert db.shipments[s.id].customer_id == b.id
++
++
++def test_reassign_writes_audit_entry():
++    a, b, s = _setup()
++    audit.LOG.clear()
++    shipments.reassign_shipment(s.id, b.id)
++    assert len(audit.LOG) == 1
++    entry = audit.LOG[-1]
++    assert entry["action"] == "shipment.reassigned"
++    assert entry["entity_id"] == s.id
++    assert entry["details"] == {"from_customer_id": a.id, "to_customer_id": b.id}
++
++
++def test_reassign_unknown_shipment():
++    b = customers.add_customer("Beta")
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment("shp_missing", b.id)
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_reassign_unknown_customer():
++    _, _, s = _setup()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, "C_missing")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.shipments[s.id].customer_id != "C_missing"
++
++
++def test_reassign_blank_input():
++    _, b, s = _setup()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment("", b.id)
++    assert err.value.code == "E_BAD_INPUT"
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, "")
++    assert err.value.code == "E_BAD_INPUT"
++
++
++def test_reassign_delivered_shipment_fails():
++    _, b, s = _setup()
++    s.status = "delivered"
++    s.delivered_at = clock.now()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, b.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert db.shipments[s.id].customer_id != b.id

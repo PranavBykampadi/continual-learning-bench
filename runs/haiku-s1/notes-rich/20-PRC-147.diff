@@ -1,0 +1,90 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:45:01
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:45:00
+@@ -14,6 +14,31 @@
+     return counts
+ 
+ 
++def _volume_label(shipment_count):
++    # Same thresholds as parcelo.legacy.billing.volume_tier; reimplemented here
++    # because the legacy module is scheduled for deletion.
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Per-customer shipment counts and volume tier.
++
++    Every customer is included, including those with no shipments.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_label(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-10 12:45:06
+@@ -0,0 +1,40 @@
++from parcelo import customers, reports, store
++from parcelo.models import Shipment
++
++
++def _make_shipments(customer_id, n):
++    for _ in range(n):
++        sid = f"shp_{len(store.db.shipments) + 1:06d}"
++        store.db.shipments[sid] = Shipment(
++            id=sid,
++            customer_id=customer_id,
++            weight_kg=1.0,
++            zone="local",
++        )
++
++
++def test_volume_report_includes_customers_without_shipments():
++    c = customers.add_customer("Acme")
++    report = reports.volume_report()
++    assert report == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_volume_report_counts_and_tiers():
++    small = customers.add_customer("Small")
++    mid = customers.add_customer("Mid")
++    big = customers.add_customer("Big")
++    _make_shipments(small.id, 3)
++    _make_shipments(mid.id, 10)
++    _make_shipments(big.id, 50)
++    report = reports.volume_report()
++    assert report[small.id] == {"shipments": 3, "tier": "starter"}
++    assert report[mid.id] == {"shipments": 10, "tier": "regular"}
++    assert report[big.id] == {"shipments": 50, "tier": "bulk"}
++
++
++def test_volume_tier_boundaries():
++    c = customers.add_customer("Edge")
++    _make_shipments(c.id, 9)
++    assert reports.volume_report()[c.id]["tier"] == "starter"
++    _make_shipments(c.id, 1)
++    assert reports.volume_report()[c.id]["tier"] == "regular"

@@ -1,0 +1,144 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:35:50
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- claims: file a claim on a delivered shipment (PRC-112)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/claims.py b/parcelo/claims.py
+--- a/parcelo/claims.py	1969-12-31 19:00:00
++++ b/parcelo/claims.py	2026-11-10 12:35:39
+@@ -0,0 +1,38 @@
++import math
++from decimal import Decimal
++
++from parcelo import audit, clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Claim
++from parcelo.shipments import get_shipment
++from parcelo.store import db
++
++DELIVERED = "delivered"
++
++
++def _valid_amount(amount):
++    if isinstance(amount, bool) or not isinstance(amount, (int, float, Decimal)):
++        return False
++    if isinstance(amount, float) and not math.isfinite(amount):
++        return False
++    return amount > 0
++
++
++def file_claim(shipment_id, amount, reason):
++    shipment = get_shipment(shipment_id)  # raises E_NOT_FOUND if missing
++    if shipment.status != DELIVERED:
++        raise DomainError(
++            "E_BAD_STATE", f"{shipment_id} is {shipment.status}, not {DELIVERED}"
++        )
++    if not _valid_amount(amount):
++        raise DomainError("E_BAD_INPUT", f"amount must be positive, got {amount!r}")
++    claim = Claim(
++        id=ids.new_id("clm"),
++        shipment_id=shipment_id,
++        amount=amount,
++        reason=reason,
++        filed_at=clock.now(),
++    )
++    db.claims[claim.id] = claim
++    audit.record("claim.filed", claim.id, shipment_id=shipment_id)
++    return claim
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-10 12:35:36
+@@ -30,3 +30,12 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Claim:
++    id: str
++    shipment_id: str
++    amount: object
++    reason: str
++    filed_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-10 12:35:37
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.claims = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.claims.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_claims.py b/tests/unit/test_claims.py
+--- a/tests/unit/test_claims.py	1969-12-31 19:00:00
++++ b/tests/unit/test_claims.py	2026-11-10 12:35:43
+@@ -0,0 +1,55 @@
++import pytest
++
++from parcelo import claims, customers, shipments, store
++from parcelo.errors import DomainError
++
++
++def _delivered_shipment():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "local")
++    s.status = "delivered"
++    return s
++
++
++def test_file_claim_stores_and_returns_claim():
++    s = _delivered_shipment()
++    claim = claims.file_claim(s.id, 12.5, "broken box")
++    assert claim.id.startswith("clm_")
++    assert claim.shipment_id == s.id
++    assert claim.amount == 12.5
++    assert claim.reason == "broken box"
++    assert claim.filed_at is not None
++    assert store.db.claims[claim.id] is claim
++
++
++def test_claim_on_undelivered_shipment_fails():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "local")
++    with pytest.raises(DomainError) as err:
++        claims.file_claim(s.id, 1, "late")
++    assert err.value.code == "E_BAD_STATE"
++    assert store.db.claims == {}
++
++
++def test_claim_on_missing_shipment_fails():
++    with pytest.raises(DomainError) as err:
++        claims.file_claim("shp_missing", 1, "x")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize(
++    "amount", [0, -1, -0.01, float("nan"), float("inf"), "5", None, True]
++)
++def test_non_positive_or_invalid_amount_fails(amount):
++    s = _delivered_shipment()
++    with pytest.raises(DomainError) as err:
++        claims.file_claim(s.id, amount, "x")
++    assert err.value.code == "E_BAD_INPUT"
++    assert store.db.claims == {}
++
++
++def test_reset_clears_claims():
++    s = _delivered_shipment()
++    claims.file_claim(s.id, 1, "x")
++    store.reset()
++    assert store.db.claims == {}

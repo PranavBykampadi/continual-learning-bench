@@ -1,0 +1,83 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:43:23
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: upgrade a standard customer to gold tier (PRC-145)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-10 12:43:23
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +20,22 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", f"unknown customer: {customer_id}")
++    customer = db.customers[customer_id]
++    if customer.tier != "standard":
++        raise DomainError(
++            "E_BAD_STATE",
++            f"customer {customer_id} is tier {customer.tier}, not standard",
++        )
++    customer.tier = "gold"
++    audit.record(
++        "customer.upgraded", customer_id, from_tier="standard", to_tier="gold"
++    )
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-10 12:43:25
+@@ -0,0 +1,34 @@
++import pytest
++
++from parcelo import audit, customers
++from parcelo.errors import DomainError
++
++
++def test_upgrade_standard_to_gold():
++    c = customers.add_customer("Acme")
++    upgraded = customers.upgrade_tier(c.id)
++    assert upgraded is c
++    assert c.tier == "gold"
++
++
++def test_upgrade_records_audit():
++    c = customers.add_customer("Acme")
++    customers.upgrade_tier(c.id)
++    assert audit.LOG[-1]["action"] == "customer.upgraded"
++    assert audit.LOG[-1]["entity_id"] == c.id
++
++
++def test_upgrade_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        customers.upgrade_tier("nope")
++    assert err.value.code == "E_NOT_FOUND"
++    assert "nope" in err.value.message
++
++
++def test_upgrade_already_gold():
++    c = customers.add_customer("Acme", tier="gold")
++    with pytest.raises(DomainError) as err:
++        customers.upgrade_tier(c.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert c.tier == "gold"
++    assert audit.LOG == []

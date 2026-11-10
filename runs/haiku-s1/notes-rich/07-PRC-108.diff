@@ -1,0 +1,83 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:35:13
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:35:12
+@@ -1,5 +1,7 @@
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +14,27 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def outstanding_by_customer():
++    """Map every customer id to the total of their open invoices (Money).
++
++    Paid and void invoices are excluded. Customers with nothing open map to zero.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None:
++            raise DomainError("E_NOT_FOUND", invoice.shipment_id)
++        try:
++            amount = Money.parse(invoice.amount)
++        except (ArithmeticError, ValueError, TypeError):
++            raise DomainError("E_BAD_INPUT", invoice.id)
++        customer_id = shipment.customer_id
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + amount
++    return totals
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-10 12:35:14
+@@ -0,0 +1,29 @@
++from parcelo import customers, invoices, reports, shipments
++from parcelo.money import Money
++
++
++def test_outstanding_by_customer_excludes_paid_and_void():
++    acme = customers.add_customer("Acme")
++    bolt = customers.add_customer("Bolt")
++    idle = customers.add_customer("Idle")
++
++    # Acme: one open invoice (7.00) and one paid invoice (7.00, excluded).
++    open_inv = invoices.issue_invoice(shipments.create_shipment(acme.id, 2, "local").id)
++    paid_inv = invoices.issue_invoice(shipments.create_shipment(acme.id, 2, "local").id)
++    invoices.mark_paid(paid_inv.id)
++
++    # Bolt: one open invoice (11.50) and one void invoice (7.00, excluded).
++    bolt_open = invoices.issue_invoice(shipments.create_shipment(bolt.id, 2, "national").id)
++    bolt_void = invoices.issue_invoice(shipments.create_shipment(bolt.id, 2, "local").id)
++    bolt_void.status = "void"
++
++    result = reports.outstanding_by_customer()
++
++    assert result[acme.id] == Money(700)
++    assert result[bolt.id] == Money(1150)
++    assert result[idle.id] == Money.zero()
++    assert open_inv.status == "open" and bolt_open.status == "open"
++
++
++def test_outstanding_by_customer_empty():
++    assert reports.outstanding_by_customer() == {}

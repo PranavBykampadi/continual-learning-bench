@@ -1,0 +1,84 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:36:38
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- rates: gold tier gets 10% off quotes via discounted_quote (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 12:36:36
+@@ -1,7 +1,15 @@
++from decimal import Decimal
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++# Fraction of the regular quote that each customer tier pays.
++TIER_FACTOR = {"standard": Decimal("1"), "gold": Decimal("0.90")}
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+         raise ValueError("unknown zone: %s" % zone)
+@@ -12,3 +20,17 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    """Regular quote for weight and zone, scaled by the tier factor.
++
++    Returns Money. Gold is 10% off; standard is full price. Rounds half-up
++    to the cent via Money.scale.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", str(zone))
++    if tier not in TIER_FACTOR:
++        raise DomainError("E_BAD_INPUT", "unknown tier: %s" % (tier,))
++    regular = Money.parse(quote(weight_kg, zone))
++    return regular.scale(TIER_FACTOR[tier])
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_gold_discount.py b/tests/unit/test_gold_discount.py
+--- a/tests/unit/test_gold_discount.py	1969-12-31 19:00:00
++++ b/tests/unit/test_gold_discount.py	2026-11-10 12:36:38
+@@ -0,0 +1,32 @@
++import pytest
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.rates import discounted_quote
++
++
++def test_gold_is_ten_percent_off():
++    # local base 4.5 + 1.25 * 2 = 7.00 -> 700 cents -> 630 cents
++    assert discounted_quote(2, "local", "gold") == Money(630)
++
++
++def test_standard_is_full_price():
++    assert discounted_quote(2, "local", "standard") == Money(700)
++
++
++def test_gold_rounds_half_up_to_cent():
++    # local 4.5 + 1.25 * 0.2 = 4.75 -> 475 cents; 90% = 427.5 -> 428
++    assert discounted_quote(0.2, "local", "gold") == Money(428)
++
++
++def test_unknown_zone_fails():
++    with pytest.raises(DomainError) as err:
++        discounted_quote(2, "moon", "gold")
++    assert err.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("tier", ["platinum", "", "Gold"])
++def test_unknown_tier_fails(tier):
++    with pytest.raises(DomainError) as err:
++        discounted_quote(2, "local", tier)
++    assert err.value.code == "E_BAD_INPUT"

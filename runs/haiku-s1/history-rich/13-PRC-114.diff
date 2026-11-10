@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:36:41
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: add invoice aging report (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:36:40
+@@ -1,6 +1,40 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def _as_naive_utc(moment):
++    """Return a naive UTC datetime; accepts naive or timezone-aware input."""
++    if moment.tzinfo is not None:
++        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
++    return moment
++
++
++def aging_report():
++    """Total open invoices by age in whole days since issue.
++
++    Buckets: "0-30" (0 to 30 days), "31-60" (31 to 60 days), "60+" (over 60 days).
++    Paid invoices are excluded. Ages are clamped to 0 for future issue dates.
++    """
++    now = _as_naive_utc(clock.now())
++    totals = {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        if invoice.issued_at is None:
++            raise DomainError("E_BAD_STATE", f"invoice {invoice.id} has no issue date")
++        age = max(0, (now - _as_naive_utc(invoice.issued_at)).days)
++        if age <= 30:
++            bucket = "0-30"
++        elif age <= 60:
++            bucket = "31-60"
++        else:
++            bucket = "60+"
++        totals[bucket] = totals[bucket] + Money.parse(invoice.amount)
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-10 12:36:46
+@@ -0,0 +1,74 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import clock, reports
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.money import Money
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 10, 12, 0, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_now():
++    clock.set_fixed(NOW)
++    yield
++
++
++def add_invoice(inv_id, amount, days_old, status="open"):
++    issued = (NOW - timedelta(days=days_old)).replace(tzinfo=None)
++    db.invoices[inv_id] = Invoice(
++        id=inv_id,
++        shipment_id="shp_x",
++        amount=amount,
++        status=status,
++        issued_at=issued,
++    )
++
++
++def test_empty_report_is_all_zero():
++    assert reports.aging_report() == {
++        "0-30": Money.zero(),
++        "31-60": Money.zero(),
++        "60+": Money.zero(),
++    }
++
++
++def test_bucket_boundaries():
++    add_invoice("a", 1.00, 0)
++    add_invoice("b", 2.00, 30)
++    add_invoice("c", 4.00, 31)
++    add_invoice("d", 8.00, 60)
++    add_invoice("e", 16.00, 61)
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(3.00)
++    assert report["31-60"] == Money.parse(12.00)
++    assert report["60+"] == Money.parse(16.00)
++
++
++def test_paid_invoices_are_excluded():
++    add_invoice("open1", 10.00, 5)
++    add_invoice("paid1", 99.00, 5, status="paid")
++    add_invoice("paid2", 99.00, 90, status="paid")
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(10.00)
++    assert report["60+"] == Money.zero()
++
++
++def test_accepts_timezone_aware_issue_dates():
++    db.invoices["aware"] = Invoice(
++        id="aware",
++        shipment_id="shp_x",
++        amount=5.50,
++        issued_at=NOW - timedelta(days=45),
++    )
++    assert reports.aging_report()["31-60"] == Money.parse(5.50)
++
++
++def test_open_invoice_without_issue_date_raises():
++    db.invoices["noday"] = Invoice(id="noday", shipment_id="shp_x", amount=1.0)
++    with pytest.raises(DomainError) as err:
++        reports.aging_report()
++    assert err.value.code == "E_BAD_STATE"

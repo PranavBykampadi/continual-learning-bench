@@ -1,0 +1,125 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:40:46
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- disputes: open a dispute on an invoice (PRC-148)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/disputes.py b/parcelo/disputes.py
+--- a/parcelo/disputes.py	1969-12-31 19:00:00
++++ b/parcelo/disputes.py	2026-11-10 12:40:45
+@@ -0,0 +1,20 @@
++from parcelo import clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Dispute
++from parcelo.store import db
++
++
++def open_dispute(invoice_id, reason):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    if not isinstance(reason, str) or not reason.strip():
++        raise DomainError("E_BAD_INPUT", "reason required")
++    dispute = Dispute(
++        id=ids.new_id("dsp"),
++        invoice_id=invoice_id,
++        reason=reason,
++        opened_at=clock.now(),
++    )
++    db.disputes[dispute.id] = dispute
++    events.emit("dispute.opened", dispute.id, invoice_id=invoice_id)
++    return dispute
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-10 12:40:43
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Dispute:
++    id: str
++    invoice_id: str
++    reason: str
++    opened_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-10 12:40:44
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.disputes = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.disputes.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_disputes.py b/tests/unit/test_disputes.py
+--- a/tests/unit/test_disputes.py	1969-12-31 19:00:00
++++ b/tests/unit/test_disputes.py	2026-11-10 12:40:48
+@@ -0,0 +1,55 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, disputes, events, store
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++
++
++@pytest.fixture
++def invoice():
++    inv = Invoice(id="INV-TEST0001", shipment_id="shp_000001", amount=12.5)
++    store.db.invoices[inv.id] = inv
++    return inv
++
++
++def test_open_dispute_stores_and_returns_dispute(invoice):
++    moment = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++
++    d = disputes.open_dispute(invoice.id, "wrong weight")
++
++    assert d.id.startswith("dsp_")
++    assert d.invoice_id == invoice.id
++    assert d.reason == "wrong weight"
++    assert d.opened_at == moment
++    assert store.db.disputes[d.id] is d
++
++
++def test_open_dispute_emits_event(invoice):
++    d = disputes.open_dispute(invoice.id, "duplicate charge")
++
++    assert events.OUTBOX[-1]["name"] == "dispute.opened"
++    assert events.OUTBOX[-1]["entity_id"] == d.id
++
++
++def test_unknown_invoice_fails(invoice):
++    with pytest.raises(DomainError) as err:
++        disputes.open_dispute("INV-MISSING", "wrong weight")
++    assert err.value.code == "E_NOT_FOUND"
++    assert store.db.disputes == {}
++
++
++@pytest.mark.parametrize("reason", ["", "   ", None])
++def test_empty_reason_fails(invoice, reason):
++    with pytest.raises(DomainError) as err:
++        disputes.open_dispute(invoice.id, reason)
++    assert err.value.code == "E_BAD_INPUT"
++    assert store.db.disputes == {}
++
++
++def test_reset_clears_disputes(invoice):
++    disputes.open_dispute(invoice.id, "wrong weight")
++    store.reset()
++    assert store.db.disputes == {}

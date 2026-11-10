@@ -1,0 +1,75 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:35:05
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-10 12:34:52
+@@ -7,6 +7,20 @@
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+ 
++def outstanding_by_customer():
++    """Map each customer id to the total of their open (unpaid, non-void) invoices.
++
++    Every known customer appears in the result; customers with nothing owing map to 0.0.
++    """
++    totals = {customer_id: 0.0 for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        totals[customer_id] = totals.get(customer_id, 0.0) + invoice.amount
++    return {customer_id: round(total, 2) for customer_id, total in totals.items()}
++
++
+ def shipments_by_zone():
+     counts = {}
+     for shipment in db.shipments.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-10 12:34:57
+@@ -0,0 +1,36 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def _helper():
++    return customers.add_customer("Acme"), customers.add_customer("Globex")
++
++
++def test_outstanding_counts_only_open_invoices():
++    acme, globex = _helper()
++    s1 = shipments.create_shipment(acme.id, 2, "local")
++    s2 = shipments.create_shipment(acme.id, 2, "local")
++    s3 = shipments.create_shipment(globex.id, 2, "local")
++    inv1 = invoices.issue_invoice(s1.id)
++    invoices.issue_invoice(s2.id)
++    invoices.issue_invoice(s3.id)
++    invoices.mark_paid(inv1.id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result[acme.id] == 7.0
++    assert result[globex.id] == 7.0
++
++
++def test_customer_with_no_open_invoices_maps_to_zero():
++    acme, globex = _helper()
++    s1 = shipments.create_shipment(acme.id, 2, "local")
++    inv = invoices.issue_invoice(s1.id)
++    invoices.mark_paid(inv.id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {acme.id: 0.0, globex.id: 0.0}
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.outstanding_by_customer() == {}

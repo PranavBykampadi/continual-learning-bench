@@ -1,0 +1,58 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-10 12:38:43
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,16 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if customer.tier == "gold":
++        raise DomainError("E_BAD_STATE", f"{customer_id} is already gold")
++    customer.tier = "gold"
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers.py b/tests/test_customers.py
+--- a/tests/test_customers.py	1969-12-31 19:00:00
++++ b/tests/test_customers.py	2026-11-10 12:38:48
+@@ -0,0 +1,27 @@
++import pytest
++
++from parcelo import customers, store
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++
++
++def test_upgrade_standard_to_gold_returns_customer():
++    store.db.customers["C1"] = Customer(id="C1", name="Acme", tier="standard")
++    result = customers.upgrade_tier("C1")
++    assert result.id == "C1"
++    assert result.tier == "gold"
++    assert store.db.customers["C1"].tier == "gold"
++
++
++def test_upgrade_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        customers.upgrade_tier("missing")
++    assert exc.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_upgrade_already_gold_fails():
++    store.db.customers["C2"] = Customer(id="C2", name="Gold Co", tier="gold")
++    with pytest.raises(DomainError) as exc:
++        customers.upgrade_tier("C2")
++    assert exc.value.code == "E_BAD_STATE"
++    assert store.db.customers["C2"].tier == "gold"

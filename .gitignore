@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
-runs/
+runs/logs/
 workspaces/
 .cache/

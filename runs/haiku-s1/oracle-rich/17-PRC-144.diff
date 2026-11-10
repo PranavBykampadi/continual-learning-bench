@@ -1,0 +1,112 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-10 12:38:38
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: add insurance fee for declared value (PRC-144)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 12:38:37
+@@ -1,7 +1,17 @@
++from decimal import Decimal, ROUND_HALF_UP
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++# Fuel surcharge percentage per zone (same values as the legacy billing helper).
++FUEL_SURCHARGE_PCT = {"local": Decimal("0"), "national": Decimal("4.0"), "international": Decimal("9.5")}
++INSURANCE_PCT = Decimal("2")
++INSURANCE_MIN = Money(100)  # 1.00
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+         raise ValueError("unknown zone: %s" % zone)
+@@ -12,3 +22,20 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value, zone):
++    """Insurance fee as Money: 2% of declared value plus the zone's fuel surcharge %, min 1.00."""
++    if zone not in FUEL_SURCHARGE_PCT:
++        raise DomainError("E_BAD_ZONE", "unknown zone: %s" % zone)
++    value = Money.parse(declared_value)
++    if value.cents <= 0:
++        raise DomainError("E_BAD_INPUT", "declared value must be positive")
++    total_pct = INSURANCE_PCT + FUEL_SURCHARGE_PCT[zone]
++    cents = (Decimal(value.cents) * total_pct / Decimal(100)).quantize(
++        Decimal("1"), rounding=ROUND_HALF_UP
++    )
++    fee = Money(int(cents), value.currency)
++    if fee < INSURANCE_MIN:
++        return INSURANCE_MIN
++    return fee
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_insurance_fee.py b/tests/unit/test_insurance_fee.py
+--- a/tests/unit/test_insurance_fee.py	1969-12-31 19:00:00
++++ b/tests/unit/test_insurance_fee.py	2026-11-10 12:38:46
+@@ -0,0 +1,55 @@
++import pytest
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.rates import insurance_fee
++
++
++def test_returns_money_in_cents():
++    fee = insurance_fee(100.0, "local")
++    assert isinstance(fee, Money)
++    assert fee.cents == 200  # 2% of 100.00
++
++
++@pytest.mark.parametrize(
++    "zone, expected_cents",
++    [
++        ("local", 200),          # 2%
++        ("national", 600),       # 2% + 4%
++        ("international", 1150), # 2% + 9.5%
++    ],
++)
++def test_zone_surcharge_added(zone, expected_cents):
++    assert insurance_fee(100.0, zone).cents == expected_cents
++
++
++def test_minimum_fee_applies():
++    # 2% of 10.00 is 0.20, so the 1.00 minimum applies.
++    assert insurance_fee(10.0, "local").cents == 100
++
++
++def test_rounds_half_up_to_cents():
++    # 33.33 * 11.5% = 3.83295 -> 3.83
++    assert insurance_fee(33.33, "international").cents == 383
++
++
++def test_float_input_avoids_binary_error():
++    # 99.99 * 6% = 5.9994 -> 6.00
++    assert insurance_fee(99.99, "national").cents == 600
++
++
++def test_accepts_money_value():
++    assert insurance_fee(Money(100000), "national").cents == 6000
++
++
++def test_unknown_zone_raises():
++    with pytest.raises(DomainError) as err:
++        insurance_fee(100.0, "moon")
++    assert err.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("value", [0, 0.0, -5.0])
++def test_non_positive_value_raises(value):
++    with pytest.raises(DomainError) as err:
++        insurance_fee(value, "local")
++    assert err.value.code == "E_BAD_INPUT"

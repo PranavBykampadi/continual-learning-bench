@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-10 12:36:14
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- rates: add discounted_quote with 10% off for gold tier (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-10 12:36:11
+@@ -1,5 +1,9 @@
++from parcelo.errors import DomainError
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++# Percent off the regular quote, by customer tier.
++TIER_DISCOUNT_PCT = {"standard": 0.0, "gold": 10.0}
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +16,20 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    """Quote for weight and zone with the percentage discount for ``tier``.
++
++    Uses the same percentage math as ``legacy.billing.apply_discount``:
++    ``round(amount * (1 - pct / 100.0), 2)``.
++    """
++    if tier not in TIER_DISCOUNT_PCT:
++        raise DomainError("E_BAD_INPUT", "unknown tier: %s" % (tier,))
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", "unknown zone: %s" % (zone,))
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
++    amount = quote(weight_kg, zone)
++    pct = TIER_DISCOUNT_PCT[tier]
++    return round(amount * (1 - pct / 100.0), 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-10 12:36:25
+@@ -1,6 +1,7 @@
+ import pytest
+ 
+ from parcelo import rates
++from parcelo.errors import DomainError
+ 
+ 
+ def test_quote_local():
+@@ -10,3 +11,30 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_discounted_quote_gold_takes_10_percent_off():
++    # regular quote 7.0 -> 6.3 after 10% off
++    assert rates.discounted_quote(2, "local", "gold") == 6.3
++
++
++def test_discounted_quote_standard_is_regular_quote():
++    assert rates.discounted_quote(2, "local", "standard") == 7.0
++
++
++def test_discounted_quote_unknown_tier():
++    with pytest.raises(DomainError) as exc:
++        rates.discounted_quote(2, "local", "platinum")
++    assert exc.value.code == "E_BAD_INPUT"
++
++
++def test_discounted_quote_unknown_zone():
++    with pytest.raises(DomainError) as exc:
++        rates.discounted_quote(2, "moon", "gold")
++    assert exc.value.code == "E_BAD_ZONE"
++
++
++def test_discounted_quote_non_positive_weight():
++    with pytest.raises(DomainError) as exc:
++        rates.discounted_quote(0, "local", "gold")
++    assert exc.value.code == "E_BAD_WEIGHT"
