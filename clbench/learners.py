@@ -68,7 +68,23 @@ def _notes_observe(state, ticket, diff, feedback_text, reflect):
     return cost
 
 
+PLACEBO = """
+## Your notes from earlier work in this repository
+- The service is called parcelo. It has customers, shipments, rates, invoices and reports.
+- Run the tests with `python -m pytest -q`. They finish in under a second.
+- Zones are local, national and international. Customer tiers are standard and gold.
+- The in-memory store lives in `parcelo/store.py` and is shared through `db`.
+- Read the ticket twice before starting and keep the change small.
+- Function names use snake_case. Modules are grouped by business area.
+"""
+
+
+def _placebo_context(state, ticket):
+    return PLACEBO
+
+
 LEARNERS = {
+    "placebo": (_placebo_context, _no_observe),
     "none": (_no_context, _no_observe),
     "oracle": (_oracle_context, _no_observe),
     "history": (_history_context, _history_observe),
