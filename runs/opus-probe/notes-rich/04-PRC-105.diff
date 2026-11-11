@@ -1,0 +1,188 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-11 17:02:46
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- refunds: record refunds against paid invoices (PRC-105)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-11 17:02:44
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Refund:
++    id: str
++    invoice_id: str
++    amount: object = None  # Money
++    created_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/refunds.py b/parcelo/refunds.py
+--- a/parcelo/refunds.py	1969-12-31 19:00:00
++++ b/parcelo/refunds.py	2026-11-11 17:02:50
+@@ -0,0 +1,41 @@
++from parcelo import audit, clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Refund
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def refunded_total(invoice_id):
++    """Sum of all refunds recorded against an invoice, as Money."""
++    total = Money.zero()
++    for refund in db.refunds.values():
++        if refund.invoice_id == invoice_id:
++            total = total + refund.amount
++    return total
++
++
++def create_refund(invoice_id, amount):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "paid":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is {invoice.status}")
++    try:
++        amount = Money.parse(amount)
++    except Exception:
++        raise DomainError("E_BAD_INPUT", f"invalid refund amount {amount!r}")
++    if amount.cents <= 0:
++        raise DomainError("E_BAD_INPUT", f"refund amount must be positive, got {amount}")
++    paid = Money.parse(invoice.amount)
++    if paid < refunded_total(invoice_id) + amount:
++        raise DomainError("E_LIMIT", f"refunds would exceed invoice amount {paid}")
++
++    refund = Refund(
++        id=ids.new_id("rfd"),
++        invoice_id=invoice_id,
++        amount=amount,
++        created_at=clock.now(),
++    )
++    db.refunds[refund.id] = refund
++    audit.record("refund.created", refund.id, invoice_id=invoice_id, amount=str(amount))
++    return refund
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-11 17:02:43
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.refunds = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.refunds.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_refunds.py b/tests/unit/test_refunds.py
+--- a/tests/unit/test_refunds.py	1969-12-31 19:00:00
++++ b/tests/unit/test_refunds.py	2026-11-11 17:02:59
+@@ -0,0 +1,97 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, invoices, refunds, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Refund
++from parcelo.money import Money
++from parcelo.store import db
++
++T0 = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
++
++
++def _issue():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "national")
++    return invoices.issue_invoice(s.id)
++
++
++def _paid():
++    inv = _issue()
++    invoices.mark_paid(inv.id)
++    return inv
++
++
++def test_create_refund_for_paid_invoice():
++    clock.set_fixed(T0)
++    inv = _paid()
++    before = len(audit.LOG)
++    r = refunds.create_refund(inv.id, Money.parse("1.50"))
++    assert isinstance(r, Refund)
++    assert r.id.startswith("rfd_")
++    assert r.invoice_id == inv.id
++    assert r.amount == Money(150)
++    assert r.created_at == T0
++    assert db.refunds[r.id] is r
++    assert len(audit.LOG) == before + 1
++    entry = audit.LOG[-1]
++    assert entry["action"] == "refund.created"
++    assert entry["entity_id"] == r.id
++    assert entry["details"]["invoice_id"] == inv.id
++
++
++def test_amount_given_as_number_is_wrapped_in_money():
++    inv = _paid()
++    r = refunds.create_refund(inv.id, 2.25)
++    assert r.amount == Money(225)
++
++
++def test_full_refund_allowed_and_partials_accumulate():
++    inv = _paid()
++    total = Money.parse(inv.amount)
++    refunds.create_refund(inv.id, Money(1))
++    refunds.create_refund(inv.id, total - Money(1))
++    assert refunds.refunded_total(inv.id) == total
++
++
++def _assert_rejected(invoice_id, amount, code):
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund(invoice_id, amount)
++    assert err.value.code == code
++    assert db.refunds == {}
++    assert len(audit.LOG) == before
++
++
++def test_unknown_invoice():
++    _assert_rejected("INV-nope", Money(100), "E_NOT_FOUND")
++
++
++def test_unpaid_invoice_rejected():
++    inv = _issue()
++    _assert_rejected(inv.id, Money(100), "E_BAD_STATE")
++    assert inv.status == "open"
++
++
++@pytest.mark.parametrize("amount", [Money(0), Money(-100), 0, -1.0, "abc"])
++def test_non_positive_or_invalid_amount_rejected(amount):
++    inv = _paid()
++    _assert_rejected(inv.id, amount, "E_BAD_INPUT")
++
++
++def test_refund_exceeding_invoice_amount_rejected():
++    inv = _paid()
++    _assert_rejected(inv.id, Money.parse(inv.amount) + Money(1), "E_LIMIT")
++
++
++def test_refunds_cannot_exceed_invoice_in_total():
++    inv = _paid()
++    total = Money.parse(inv.amount)
++    refunds.create_refund(inv.id, total - Money(1))
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund(inv.id, Money(2))
++    assert err.value.code == "E_LIMIT"
++    assert len(db.refunds) == 1
++    assert len(audit.LOG) == before

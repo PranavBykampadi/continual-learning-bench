@@ -1,0 +1,107 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-11 17:05:47
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: outstanding open-invoice balance per customer (PRC-108)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-11 17:05:45
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +23,23 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer():
++    """Map every customer id to the total of that customer's open invoices.
++
++    Customers with nothing outstanding map to ``Money.zero()``. Paid and void
++    invoices are ignored. Invoices are attributed to a customer through their
++    shipment; invoices whose shipment no longer exists are skipped.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None:
++            continue
++        customer_id = shipment.customer_id
++        current = totals.get(customer_id, Money.zero())
++        totals[customer_id] = current + Money.parse(invoice.amount)
++    return totals
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_outstanding_report.py b/tests/unit/test_outstanding_report.py
+--- a/tests/unit/test_outstanding_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_outstanding_report.py	2026-11-11 17:05:52
+@@ -0,0 +1,58 @@
++from parcelo import audit, reports
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _customer(cid):
++    db.customers[cid] = Customer(id=cid, name=cid)
++
++
++def _shipment(sid, cid):
++    db.shipments[sid] = Shipment(id=sid, customer_id=cid, weight_kg=1.0, zone="local")
++
++
++def _invoice(iid, sid, amount, status="open"):
++    db.invoices[iid] = Invoice(id=iid, shipment_id=sid, amount=amount, status=status)
++
++
++def test_sums_open_invoices_per_customer():
++    _customer("c1")
++    _customer("c2")
++    _shipment("s1", "c1")
++    _shipment("s2", "c1")
++    _shipment("s3", "c2")
++    _invoice("i1", "s1", 10.10)
++    _invoice("i2", "s2", 0.20)
++    _invoice("i3", "s3", 5.00)
++    result = reports.outstanding_by_customer()
++    assert result == {"c1": Money(1030), "c2": Money(500)}
++    assert all(isinstance(v, Money) for v in result.values())
++
++
++def test_paid_and_void_invoices_excluded():
++    _customer("c1")
++    _shipment("s1", "c1")
++    _invoice("i1", "s1", 7.00)
++    _invoice("i2", "s1", 3.00, status="paid")
++    _invoice("i3", "s1", 4.00, status="void")
++    assert reports.outstanding_by_customer() == {"c1": Money(700)}
++
++
++def test_customer_without_open_invoices_maps_to_zero():
++    _customer("c1")
++    _shipment("s1", "c1")
++    _invoice("i1", "s1", 3.00, status="paid")
++    assert reports.outstanding_by_customer() == {"c1": Money.zero()}
++
++
++def test_empty_store():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_report_records_no_audit():
++    _customer("c1")
++    _shipment("s1", "c1")
++    _invoice("i1", "s1", 1.00)
++    reports.outstanding_by_customer()
++    assert audit.LOG == []

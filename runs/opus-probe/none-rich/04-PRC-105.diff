@@ -1,0 +1,151 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-11 17:01:42
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- refunds: record refunds against paid invoices (PRC-105)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-11 17:01:29
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Refund:
++    id: str
++    invoice_id: str
++    amount: float
++    created_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/refunds.py b/parcelo/refunds.py
+--- a/parcelo/refunds.py	1969-12-31 19:00:00
++++ b/parcelo/refunds.py	2026-11-11 17:01:35
+@@ -0,0 +1,36 @@
++from parcelo import audit, clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Refund
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def create_refund(invoice_id, amount):
++    """Record a refund against a paid invoice."""
++    invoice = db.invoices.get(invoice_id)
++    if invoice is None:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    if invoice.status != "paid":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is {invoice.status}, not paid")
++    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
++        raise DomainError("E_BAD_INPUT", f"refund amount must be positive, got {amount!r}")
++
++    already_refunded = sum(
++        (Money.parse(r.amount) for r in refunds_for_invoice(invoice_id)), Money.zero()
++    )
++    if Money.parse(invoice.amount) < already_refunded + Money.parse(amount):
++        raise DomainError("E_LIMIT", f"refunds would exceed invoice {invoice_id} amount")
++
++    refund = Refund(
++        id=ids.new_id("rfd"),
++        invoice_id=invoice_id,
++        amount=amount,
++        created_at=clock.now(),
++    )
++    db.refunds[refund.id] = refund
++    audit.record("refund.created", refund.id, invoice_id=invoice_id, amount=amount)
++    return refund
++
++
++def refunds_for_invoice(invoice_id):
++    return [r for r in db.refunds.values() if r.invoice_id == invoice_id]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-11 17:01:30
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.refunds = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.refunds.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_refunds.py b/tests/unit/test_refunds.py
+--- a/tests/unit/test_refunds.py	1969-12-31 19:00:00
++++ b/tests/unit/test_refunds.py	2026-11-11 17:01:41
+@@ -0,0 +1,65 @@
++import pytest
++
++from parcelo import audit, customers, invoices, refunds, shipments, store
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _invoice(paid=True):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)  # amount 7.0
++    if paid:
++        invoices.mark_paid(inv.id)
++    return inv
++
++
++def test_refund_paid_invoice():
++    inv = _invoice()
++    r = refunds.create_refund(inv.id, 3.0)
++    assert r.id.startswith("rfd_")
++    assert r.invoice_id == inv.id
++    assert r.amount == 3.0
++    assert r.created_at is not None
++    assert db.refunds[r.id] is r
++    assert audit.LOG[-1]["action"] == "refund.created"
++
++
++def test_unknown_invoice():
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund("nope", 1.0)
++    assert err.value.code == "E_NOT_FOUND"
++    assert db.refunds == {}
++
++
++def test_unpaid_invoice():
++    inv = _invoice(paid=False)
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund(inv.id, 1.0)
++    assert err.value.code == "E_BAD_STATE"
++    assert db.refunds == {}
++
++
++@pytest.mark.parametrize("amount", [0, -1.0, "5", None, True])
++def test_bad_amount(amount):
++    inv = _invoice()
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund(inv.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++
++
++def test_cannot_refund_more_than_invoice():
++    inv = _invoice()
++    refunds.create_refund(inv.id, 4.0)
++    refunds.create_refund(inv.id, 3.0)
++    with pytest.raises(DomainError) as err:
++        refunds.create_refund(inv.id, 0.01)
++    assert err.value.code == "E_LIMIT"
++    assert len(db.refunds) == 2
++
++
++def test_reset_clears_refunds():
++    inv = _invoice()
++    refunds.create_refund(inv.id, 1.0)
++    store.reset()
++    assert db.refunds == {}
