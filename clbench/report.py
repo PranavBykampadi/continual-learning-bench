@@ -49,6 +49,19 @@ def exposures(attempts):
     return seen
 
 
+def hidden_rules(baselines):
+    """Rules the stateless agent follows less than half the time, so following them takes learning, not reading."""
+    pooled = defaultdict(list)
+    for attempts in baselines:
+        for rule, outcomes in exposures(attempts).items():
+            pooled[rule] += outcomes
+    return {rule for rule, outcomes in pooled.items() if mean(outcomes) < 0.5}
+
+
+def hidden_compliance(attempts, rules):
+    return mean(o for rule, outcomes in exposures(attempts).items() if rule in rules for o in outcomes)
+
+
 def repeat_violation_rate(attempts):
     """Share of exposures that are violations, counted only after the first violation of that convention.
 
@@ -105,10 +118,11 @@ def render(run_name):
     baseline, oracle = arms.get("none-rich"), arms.get("oracle-rich")
     lines = [
         f"# Results: run `{run_name}`", "",
-        "| arm | tickets | CI pass | compliance | first-try merge | early / mid / late compliance | "
+        "| arm | tickets | CI pass | compliance | hidden-rule compliance | first-try merge | early / mid / late compliance | "
         "gain vs stateless (95% CI) | oracle gap closed | repeat-violation rate | $ per ticket |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
+    hidden = hidden_rules([baseline]) if baseline else set()
     for name, attempts in arms.items():
         compliance = mean(a.feedback.compliance for a in attempts)
         segments = " / ".join(f"{mean(a.feedback.compliance for a in part):.2f}" for part in thirds(attempts))
@@ -123,9 +137,11 @@ def render(run_name):
         cost = mean(a.cost_usd + a.learn_cost_usd for a in attempts)
         lines.append(
             f"| {name} | {len(attempts)} | {mean(a.feedback.ci_passed for a in attempts):.2f} | {compliance:.2f} | "
-            f"{mean(a.feedback.merged for a in attempts):.2f} | {segments} | {gain} | {closed} | "
+            f"{hidden_compliance(attempts, hidden):.2f} | {mean(a.feedback.merged for a in attempts):.2f} | {segments} | {gain} | {closed} | "
             f"{repeat:.2f} (n={chances}) | {cost:.3f} |"
         )
+    lines += ["", "Hidden rules are the ones the stateless arm follows less than half the time: "
+              + (", ".join(f"`{r}`" for r in sorted(hidden)) or "none") + "."]
     lines += ["", "## Compliance by how many times the agent has met the convention", "",
               "| arm | 1st exposure | 2nd to 3rd | 4th and later |", "|---|---|---|---|"]
     for name, attempts in arms.items():
@@ -149,9 +165,11 @@ def render_combined(run_names):
     lines = [
         f"# Combined results: {', '.join(f'`{n}`' for n in run_names)}", "",
         "Each cell is the mean over runs, with the lowest and highest run in brackets.", "",
-        "| arm | compliance | first-try merge | gain vs stateless | repeat-violation rate | late-third compliance |",
-        "|---|---|---|---|---|---|",
+        "| arm | compliance | hidden-rule compliance | first-try merge | gain vs stateless | "
+        "repeat-violation rate | late-third compliance |",
+        "|---|---|---|---|---|---|---|",
     ]
+    hidden = hidden_rules([run["none-rich"] for run in runs if "none-rich" in run])
 
     def cell(values):
         values = [v for v in values if v == v]
@@ -167,10 +185,13 @@ def render_combined(run_names):
         ]
         lines.append(
             f"| {name} | {cell([mean(a.feedback.compliance for a in r) for r in per_run])} | "
+            f"{cell([hidden_compliance(r, hidden) for r in per_run])} | "
             f"{cell([mean(a.feedback.merged for a in r) for r in per_run])} | {cell(gains)} | "
             f"{cell([repeat_violation_rate(r)[0] for r in per_run])} | "
             f"{cell([mean(a.feedback.compliance for a in thirds(r)[2]) for r in per_run])} |"
         )
+    lines += ["", "Hidden rules are the ones the stateless arm follows less than half the time, runs pooled: "
+              + (", ".join(f"`{r}`" for r in sorted(hidden)) or "none") + "."]
     rules = sorted({rule for run in runs for attempts in run.values() for rule in exposures(attempts)})
     lines += ["", "## Compliance per rule, all runs pooled", "",
               "| arm | " + " | ".join(f"`{r}`" for r in rules) + " |", "|---|" + "---|" * len(rules)]
