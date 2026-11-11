@@ -1,0 +1,104 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:28:01
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- shipments: reassign a shipment to another customer (PRC-141)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-11 17:25:55
++++ b/parcelo/shipments.py	2026-11-11 17:27:57
+@@ -1,4 +1,4 @@
+-from parcelo import clock, events, ids
++from parcelo import audit, clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+ from parcelo.rates import ZONE_BASE
+@@ -28,3 +28,26 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def reassign_shipment(shipment_id, new_customer_id):
++    shipment = get_shipment(shipment_id)
++    if new_customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", new_customer_id)
++    if shipment.status == "delivered" or shipment.delivered_at is not None:
++        raise DomainError("E_BAD_STATE", f"shipment {shipment_id} already delivered")
++    old_customer_id = shipment.customer_id
++    shipment.customer_id = new_customer_id
++    audit.record(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=old_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    events.emit(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=old_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments.py b/tests/unit/test_shipments.py
+--- a/tests/unit/test_shipments.py	2026-11-11 17:25:55
++++ b/tests/unit/test_shipments.py	2026-11-11 17:28:09
+@@ -1,6 +1,6 @@
+ import pytest
+ 
+-from parcelo import customers, events, shipments
++from parcelo import audit, customers, events, shipments
+ from parcelo.errors import DomainError
+ 
+ 
+@@ -15,3 +15,45 @@
+     with pytest.raises(DomainError) as err:
+         shipments.create_shipment("nope", 1, "local")
+     assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def _two_customers_and_shipment():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    s = shipments.create_shipment(a.id, 2, "local")
++    return a, b, s
++
++
++def test_reassign_shipment():
++    a, b, s = _two_customers_and_shipment()
++    result = shipments.reassign_shipment(s.id, b.id)
++    assert result is s
++    assert shipments.get_shipment(s.id).customer_id == b.id
++    assert events.OUTBOX[-1]["name"] == "shipment.reassigned"
++    assert events.OUTBOX[-1]["payload"] == {"from_customer_id": a.id, "to_customer_id": b.id}
++    assert audit.LOG[-1]["action"] == "shipment.reassigned"
++
++
++def test_reassign_unknown_shipment():
++    _, b, _ = _two_customers_and_shipment()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment("shp_missing", b.id)
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_reassign_to_unknown_customer():
++    a, _, s = _two_customers_and_shipment()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, "nope")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert s.customer_id == a.id
++
++
++def test_reassign_delivered_shipment():
++    a, b, s = _two_customers_and_shipment()
++    s.status = "delivered"
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, b.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert s.customer_id == a.id
++    assert not any(e["name"] == "shipment.reassigned" for e in events.OUTBOX)

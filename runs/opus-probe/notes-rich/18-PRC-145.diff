@@ -1,0 +1,148 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:33:19
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: upgrade a standard customer to the gold tier (PRC-145)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:25:55
++++ b/parcelo/customers.py	2026-11-11 17:33:17
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +20,21 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    """Move a standard customer to the gold tier and return the customer."""
++    if not isinstance(customer_id, str) or not customer_id:
++        raise DomainError("E_BAD_INPUT", "customer_id must be a non-empty string")
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", f"customer {customer_id} not found")
++    if customer.tier != "standard":
++        raise DomainError("E_BAD_STATE", f"customer {customer_id} is already {customer.tier}")
++    previous = customer.tier
++    customer.tier = "gold"
++    events.emit("customer.upgraded", customer.id, from_tier=previous, to_tier="gold")
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_upgrade_tier.py b/tests/unit/test_customers_upgrade_tier.py
+--- a/tests/unit/test_customers_upgrade_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_upgrade_tier.py	2026-11-11 17:33:27
+@@ -0,0 +1,100 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(NOW)
++    yield
++    clock.clear_fixed()
++
++
++def _assert_rejected(customer_id, code, customer=None):
++    before = customer.tier if customer is not None else None
++    with pytest.raises(DomainError) as err:
++        customers.upgrade_tier(customer_id)
++    assert err.value.code == code
++    if customer is not None:
++        assert customer.tier == before
++    assert events.OUTBOX == []
++
++
++def test_upgrade_standard_to_gold():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++
++    result = customers.upgrade_tier(c.id)
++
++    assert isinstance(result, Customer)
++    assert result is c
++    assert result.tier == "gold"
++    assert db.customers[c.id].tier == "gold"
++    assert customers.get_customer(c.id).tier == "gold"
++
++
++def test_upgrade_emits_exact_event():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++
++    customers.upgrade_tier(c.id)
++
++    assert events.OUTBOX == [
++        {
++            "name": "customer.upgraded",
++            "entity_id": c.id,
++            "at": NOW,
++            "payload": {"from_tier": "standard", "to_tier": "gold"},
++        }
++    ]
++
++
++def test_upgrade_leaves_other_fields_and_customers_untouched():
++    c = customers.add_customer("Acme")
++    other = customers.add_customer("Other")
++    events.OUTBOX.clear()
++
++    customers.upgrade_tier(c.id)
++
++    assert c.name == "Acme"
++    assert c.credit_limit == 500.0
++    assert c.active is True
++    assert other.tier == "standard"
++
++
++def test_unknown_customer_rejected():
++    _assert_rejected("nope", "E_NOT_FOUND")
++
++
++def test_already_gold_rejected():
++    c = customers.add_customer("Goldie", tier="gold")
++    events.OUTBOX.clear()
++    _assert_rejected(c.id, "E_BAD_STATE", c)
++
++
++def test_repeat_upgrade_rejected_and_emits_once():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++    customers.upgrade_tier(c.id)
++    assert len(events.OUTBOX) == 1
++    events.OUTBOX.clear()
++
++    _assert_rejected(c.id, "E_BAD_STATE", c)
++    assert c.tier == "gold"
++
++
++@pytest.mark.parametrize("bad", [None, "", 123, 1.5, ["C1"], {"id": "C1"}])
++def test_bad_input_rejected(bad):
++    _assert_rejected(bad, "E_BAD_INPUT")
++
++
++def test_input_validated_before_lookup():
++    # An empty id is invalid input, not a missing customer.
++    _assert_rejected("", "E_BAD_INPUT")

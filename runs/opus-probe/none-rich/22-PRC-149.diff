@@ -1,0 +1,120 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:33:39
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- shipments: split a created shipment into several by weight (PRC-149)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-11 17:25:55
++++ b/parcelo/shipments.py	2026-11-11 17:33:29
+@@ -1,3 +1,5 @@
++from decimal import Decimal, InvalidOperation
++
+ from parcelo import clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+@@ -28,3 +30,52 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def _as_decimal(weight):
++    if isinstance(weight, bool):
++        raise DomainError("E_BAD_WEIGHT", str(weight))
++    try:
++        value = Decimal(str(weight))
++    except (InvalidOperation, ValueError, TypeError):
++        raise DomainError("E_BAD_WEIGHT", str(weight)) from None
++    if not value.is_finite() or value <= 0:
++        raise DomainError("E_BAD_WEIGHT", str(weight))
++    return value
++
++
++def split_shipment(shipment_id, weights):
++    """Replace a "created" shipment with one new shipment per weight.
++
++    All validation happens before any state is changed, so a failed split
++    leaves the store untouched.
++    """
++    original = get_shipment(shipment_id)
++    if original.status != "created":
++        raise DomainError("E_BAD_STATE", f"{shipment_id} is {original.status}")
++    weights = list(weights)
++    if not weights:
++        raise DomainError("E_BAD_INPUT", "weights must not be empty")
++    # Compare as decimals of the written values so 0.1 + 0.2 matches 0.3.
++    total = sum((_as_decimal(w) for w in weights), Decimal(0))
++    if total != _as_decimal(original.weight_kg):
++        raise DomainError(
++            "E_BAD_WEIGHT", f"weights sum to {total}, expected {original.weight_kg}"
++        )
++
++    parts = []
++    for weight in weights:
++        part = Shipment(
++            id=ids.new_id("shp"),
++            customer_id=original.customer_id,
++            weight_kg=weight,
++            zone=original.zone,
++            created_at=clock.now(),
++        )
++        db.shipments[part.id] = part
++        events.emit("shipment.created", part.id, zone=part.zone)
++        parts.append(part)
++
++    original.status = "split"
++    events.emit("shipment.split", original.id, into=[p.id for p in parts])
++    return parts
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments.py b/tests/unit/test_shipments.py
+--- a/tests/unit/test_shipments.py	2026-11-11 17:25:55
++++ b/tests/unit/test_shipments.py	2026-11-11 17:33:35
+@@ -15,3 +15,43 @@
+     with pytest.raises(DomainError) as err:
+         shipments.create_shipment("nope", 1, "local")
+     assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def _shipment(weight=3.0, zone="national"):
++    c = customers.add_customer("Acme")
++    return shipments.create_shipment(c.id, weight, zone)
++
++
++def test_split_creates_parts_in_order():
++    s = _shipment(0.6)
++    parts = shipments.split_shipment(s.id, [0.1, 0.2, 0.3])
++    assert [p.weight_kg for p in parts] == [0.1, 0.2, 0.3]
++    assert all(p.customer_id == s.customer_id and p.zone == s.zone for p in parts)
++    assert all(p.status == "created" for p in parts)
++    assert len({p.id for p in parts} | {s.id}) == 4
++    assert shipments.get_shipment(s.id).status == "split"
++    assert events.OUTBOX[-1]["name"] == "shipment.split"
++
++
++def test_split_unknown_shipment():
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment("shp_missing", [1])
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_split_requires_created_status():
++    s = _shipment()
++    shipments.split_shipment(s.id, [1, 2])
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment(s.id, [1, 2])
++    assert err.value.code == "E_BAD_STATE"
++
++
++@pytest.mark.parametrize("weights", [[1, 1], [2, 2], [], [3, 0], [4, -1], ["x"]])
++def test_split_rejects_bad_weights_without_side_effects(weights):
++    s = _shipment()
++    before = dict(shipments.db.shipments)
++    with pytest.raises(DomainError):
++        shipments.split_shipment(s.id, weights)
++    assert shipments.db.shipments == before
++    assert s.status == "created"

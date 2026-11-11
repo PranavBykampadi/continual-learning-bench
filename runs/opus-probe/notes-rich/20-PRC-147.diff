@@ -1,0 +1,116 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:35:20
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:25:55
++++ b/parcelo/reports.py	2026-11-11 17:35:19
+@@ -22,3 +22,23 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def _volume_tier(shipment_count):
++    # Copied from parcelo.legacy.billing.volume_tier (legacy is scheduled for deletion).
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_volume.py b/tests/unit/test_reports_volume.py
+--- a/tests/unit/test_reports_volume.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_volume.py	2026-11-11 17:35:27
+@@ -0,0 +1,74 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, reports, shipments
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(NOW)
++    yield
++    clock.clear_fixed()
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 2.0, "national")
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.volume_report() == {}
++
++
++def test_counts_per_customer_and_includes_customers_without_shipments():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    idle = customers.add_customer("Idle")
++    _ship(a.id, 3)
++    _ship(b.id, 1)
++
++    assert reports.volume_report() == {
++        a.id: {"shipments": 3, "tier": "starter"},
++        b.id: {"shipments": 1, "tier": "starter"},
++        idle.id: {"shipments": 0, "tier": "starter"},
++    }
++
++
++def test_counts_shipments_in_any_status():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 2)
++    next(iter(db.shipments.values())).status = "delivered"
++    assert reports.volume_report()[c.id]["shipments"] == 2
++
++
++@pytest.mark.parametrize(
++    "count, tier",
++    [(0, "starter"), (9, "starter"), (10, "regular"), (49, "regular"), (50, "bulk"), (51, "bulk")],
++)
++def test_tier_thresholds(count, tier):
++    c = customers.add_customer("Acme")
++    _ship(c.id, count)
++    assert reports.volume_report()[c.id] == {"shipments": count, "tier": tier}
++
++
++def test_ignores_shipments_of_unknown_customers():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 1)
++    next(iter(db.shipments.values())).customer_id = "cus_gone"
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_read_only_emits_nothing_and_leaves_state_untouched():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 2)
++    events.OUTBOX.clear()
++    before = (dict(db.customers), dict(db.shipments), dict(db.invoices))
++
++    reports.volume_report()
++
++    assert events.OUTBOX == []
++    assert (dict(db.customers), dict(db.shipments), dict(db.invoices)) == before

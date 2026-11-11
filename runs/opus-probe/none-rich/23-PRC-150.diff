@@ -1,0 +1,92 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:34:15
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: set a customer's credit limit (PRC-150)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:25:55
++++ b/parcelo/customers.py	2026-11-11 17:34:13
+@@ -1,5 +1,8 @@
++import math
+ import uuid
+ 
++from parcelo import audit, events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +21,28 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def set_credit_limit(customer_id, amount):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if (
++        isinstance(amount, bool)
++        or not isinstance(amount, (int, float))
++        or not math.isfinite(amount)
++        or amount < 0
++    ):
++        raise DomainError("E_BAD_INPUT", f"invalid credit limit {amount!r}")
++    customer = db.customers[customer_id]
++    old_limit = customer.credit_limit
++    customer.credit_limit = float(amount)
++    audit.record(
++        "customer.credit_limit_set", customer_id, old=old_limit, new=customer.credit_limit
++    )
++    events.emit(
++        "customer.credit_limit_changed", customer_id, credit_limit=customer.credit_limit
++    )
++    return customer.credit_limit
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-11 17:34:19
+@@ -0,0 +1,36 @@
++import pytest
++
++from parcelo import audit, customers, events
++from parcelo.errors import DomainError
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 1200) == 1200
++    assert customers.get_customer(c.id).credit_limit == 1200
++    assert events.OUTBOX[-1]["name"] == "customer.credit_limit_changed"
++    assert audit.LOG[-1]["details"] == {"old": 500.0, "new": 1200.0}
++
++
++def test_set_credit_limit_allows_zero():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 0) == 0
++
++
++def test_set_credit_limit_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit("nope", 100)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++@pytest.mark.parametrize(
++    "amount", [-1, -0.01, float("nan"), float("inf"), "100", None, True]
++)
++def test_set_credit_limit_rejects_invalid_amount(amount):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert customers.get_customer(c.id).credit_limit == 500.0
++    assert events.OUTBOX == []
++    assert audit.LOG == []

@@ -1,0 +1,143 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:25:55
++++ b/CHANGELOG.md	2026-11-11 17:28:43
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- shipments: reassign a shipment to another customer (PRC-141)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-11 17:25:55
++++ b/parcelo/shipments.py	2026-11-11 17:28:48
+@@ -1,4 +1,4 @@
+-from parcelo import clock, events, ids
++from parcelo import audit, clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+ from parcelo.rates import ZONE_BASE
+@@ -28,3 +28,25 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def reassign_shipment(shipment_id, new_customer_id):
++    """Move a shipment booked under the wrong customer to ``new_customer_id``."""
++    if not shipment_id or not new_customer_id:
++        raise DomainError("E_BAD_INPUT", "shipment_id and new_customer_id are required")
++    shipment = get_shipment(shipment_id)
++    if new_customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", new_customer_id)
++    if shipment.status == "delivered":
++        raise DomainError("E_BAD_STATE", f"{shipment_id} already delivered")
++    old_customer_id = shipment.customer_id
++    if old_customer_id == new_customer_id:
++        return shipment
++    shipment.customer_id = new_customer_id
++    audit.record(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=old_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_reassign.py b/tests/unit/test_shipments_reassign.py
+--- a/tests/unit/test_shipments_reassign.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_reassign.py	2026-11-11 17:28:57
+@@ -0,0 +1,93 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc)
++
++
++def _setup():
++    clock.set_fixed(NOW)
++    old = customers.add_customer("Acme")
++    new = customers.add_customer("Globex")
++    s = shipments.create_shipment(old.id, 2.0, "national")
++    return old, new, s
++
++
++def _assert_rejected(code, shipment_id, customer_id, shipment=None, owner=None):
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(shipment_id, customer_id)
++    assert err.value.code == code
++    if shipment is not None:
++        assert shipment.customer_id == owner
++    assert len(audit.LOG) == before
++
++
++def test_reassign_happy_path():
++    old, new, s = _setup()
++    result = shipments.reassign_shipment(s.id, new.id)
++    assert result is s
++    assert db.shipments[s.id].customer_id == new.id
++    assert audit.LOG == [
++        {
++            "action": "shipment.reassigned",
++            "entity_id": s.id,
++            "at": NOW,
++            "details": {"from_customer_id": old.id, "to_customer_id": new.id},
++        }
++    ]
++
++
++@pytest.mark.parametrize("status", ["created", "in_transit"])
++def test_reassign_allowed_before_delivery(status):
++    _, new, s = _setup()
++    s.status = status
++    shipments.reassign_shipment(s.id, new.id)
++    assert s.customer_id == new.id
++
++
++def test_reassign_to_same_customer_is_noop():
++    old, _, s = _setup()
++    assert shipments.reassign_shipment(s.id, old.id) is s
++    assert s.customer_id == old.id
++    assert audit.LOG == []
++
++
++def test_reassign_unknown_shipment():
++    _, new, _ = _setup()
++    _assert_rejected("E_NOT_FOUND", "shp_missing", new.id)
++
++
++def test_reassign_unknown_customer():
++    old, _, s = _setup()
++    _assert_rejected("E_UNKNOWN_CUSTOMER", s.id, "Cnope", s, old.id)
++
++
++def test_reassign_delivered_shipment():
++    old, new, s = _setup()
++    s.status = "delivered"
++    _assert_rejected("E_BAD_STATE", s.id, new.id, s, old.id)
++
++
++@pytest.mark.parametrize(
++    "sid,cid", [("", "C1"), (None, "C1"), ("shp_1", ""), ("shp_1", None)]
++)
++def test_reassign_empty_input(sid, cid):
++    old, _, s = _setup()
++    _assert_rejected("E_BAD_INPUT", sid, cid, s, old.id)
++
++
++def test_reassign_moves_outstanding_balance():
++    old, new, s = _setup()
++    db.invoices["inv_1"] = Invoice(
++        "inv_1", s.id, amount=10.0, status="open", issued_at=NOW.replace(tzinfo=None)
++    )
++    assert customers.outstanding_balance(old.id) == 10.0
++    shipments.reassign_shipment(s.id, new.id)
++    assert customers.outstanding_balance(old.id) == 0.0
++    assert customers.outstanding_balance(new.id) == 10.0
