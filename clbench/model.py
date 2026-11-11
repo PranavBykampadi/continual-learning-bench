@@ -1,9 +1,12 @@
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ORG = ROOT / "org"
+# One organization pack is active per process. Pick it with CLBENCH_ORG.
+ORG = ROOT / "orgs" / os.environ.get("CLBENCH_ORG", "parcelo")
+PACK = json.loads((ORG / "pack.json").read_text())
 
 
 @dataclass(frozen=True)

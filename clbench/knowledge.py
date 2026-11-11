@@ -7,11 +7,10 @@ import sys
 from collections import defaultdict
 from datetime import date, timedelta
 
-from clbench.model import ORG, load_conventions, load_tickets
+from clbench.model import ORG, PACK, load_conventions, load_tickets
 
 KNOWLEDGE = ORG / "knowledge"
 STREAM_START = date(2026, 3, 2)
-MIGRATION_POSITION = 14
 
 _AVAILABLE = (
     "\nThe company's Slack export, Notion pages and past pull request discussions are in `../company/` "
@@ -76,40 +75,45 @@ def validate():
     """Check that the evidence map is true of the files and matches the experimental design."""
     evidence = json.loads((KNOWLEDGE / "evidence.json").read_text())
     problems = []
-    first_seen = {}
-    for position, ticket in enumerate(load_tickets()):
+    tickets = load_tickets()
+    first_seen, snapshot_start = {}, {}
+    for position, ticket in enumerate(tickets):
+        snapshot_start.setdefault(ticket.snapshot, position)
         for convention in ticket.conventions:
             first_seen.setdefault(convention, position)
 
-    for convention in load_conventions():
-        items = evidence.get(convention, [])
+    for convention, spec in load_conventions().items():
+        if convention not in evidence:
+            problems.append(f"{convention}: missing from evidence.json (use [] for a rule nobody wrote down)")
+            continue
         dated = []
-        for item in items:
+        for item in evidence[convention]:
             hits = [d for d, text in _source_text(item["file"]) if item["needle"] in text]
             if not hits:
                 problems.append(f"{convention}: needle not found in {item['file']}: {item['needle']!r}")
                 continue
             dated.append((min(hits), item["kind"]))
-        correct = [d for d, kind in dated if kind == "correct"]
-        if convention == "tests":
-            if items:
-                problems.append("tests: must have no evidence")
+        if not evidence[convention] or convention not in first_seen:
             continue
+        correct = [d for d, kind in dated if kind == "correct"]
         if not correct or min(correct) >= ticket_date(first_seen[convention]):
             problems.append(f"{convention}: no correct evidence visible at its first ticket")
-        if convention == "events" and min(correct) < ticket_date(MIGRATION_POSITION) - timedelta(days=1):
-            problems.append("events: announced before the migration")
+            continue
+        introduced = min(snapshot_start[s] for s in spec.snapshots if s in snapshot_start)
+        if introduced and min(correct) < ticket_date(introduced) - timedelta(days=1):
+            problems.append(f"{convention}: written down before the change that introduced it")
 
     everything = "\n".join(text for _, _, text in documents())
-    for d, text in ((d, t) for _, d, t in documents()):
-        if "events.emit" in text and d < ticket_date(MIGRATION_POSITION) - timedelta(days=1):
-            problems.append(f"events.emit mentioned on {d}, before the migration")
-    for ticket in load_tickets():
+    for marker, snapshot in PACK.get("late_markers", {}).items():
+        for _, d, text in documents():
+            if marker in text and d < ticket_date(snapshot_start[snapshot]) - timedelta(days=1):
+                problems.append(f"{marker} mentioned on {d}, before the change that introduced it")
+    for ticket in tickets:
         if ticket.id in everything:
             problems.append(f"knowledge base mentions ticket {ticket.id}")
-    for marker in ("tests/unit", "frozen"):
+    for marker in PACK.get("leak_markers", []):
         if marker in everything:
-            problems.append(f"knowledge base contains '{marker}', which leaks the tests rule")
+            problems.append(f"knowledge base contains '{marker}', which leaks an unwritten rule")
     return problems
 
 

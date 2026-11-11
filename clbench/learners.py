@@ -4,13 +4,13 @@ A learner is state (a JSON-serialisable dict) plus two functions:
 context(state, ticket) -> text placed in the agent prompt
 observe(state, ticket, diff, feedback_text, reflect) -> learning cost in USD
 """
-from clbench.model import load_conventions
+from clbench.model import ORG, PACK, load_conventions
 
 NOTES_LIMIT = 3000
 
-REFLECT = """You are a software engineer keeping private working notes about a codebase and team you work with.
-You just finished a ticket and received CI and code review feedback. Update your notes so that you do better on FUTURE,
-DIFFERENT tickets in this repository. Keep what is still true, fix what turned out wrong, drop what is ticket-specific.
+REFLECT = """You are {role} keeping private working notes about the workplace and team you work with.
+You just finished a ticket and received feedback on it. Update your notes so that you do better on FUTURE,
+DIFFERENT tickets at this company. Keep what is still true, fix what turned out wrong, drop what is ticket-specific.
 Keep the notes under {limit} characters. Reply with the full updated notes only, no preamble.
 
 ## Current notes
@@ -37,7 +37,7 @@ def _no_observe(state, ticket, diff, feedback_text, reflect):
 
 def _oracle_context(state, ticket):
     rules = [c.rule for c in load_conventions().values() if ticket.snapshot in c.snapshots]
-    return "\n## Team engineering handbook\n" + "\n".join(f"- {r}" for r in rules) + "\n"
+    return "\n## Team handbook\n" + "\n".join(f"- {r}" for r in rules) + "\n"
 
 
 def _history_context(state, ticket):
@@ -59,7 +59,7 @@ def _notes_context(state, ticket):
 
 def _notes_observe(state, ticket, diff, feedback_text, reflect):
     prompt = REFLECT.format(
-        limit=NOTES_LIMIT, notes=state.get("notes") or "(empty)", id=ticket.id,
+        role=PACK["role"], limit=NOTES_LIMIT, notes=state.get("notes") or "(empty)", id=ticket.id,
         title=ticket.title, body=ticket.body, diff=diff, feedback=feedback_text,
     )
     notes, cost = reflect(prompt)
@@ -68,15 +68,7 @@ def _notes_observe(state, ticket, diff, feedback_text, reflect):
     return cost
 
 
-PLACEBO = """
-## Your notes from earlier work in this repository
-- The service is called parcelo. It has customers, shipments, rates, invoices and reports.
-- Run the tests with `python -m pytest -q`. They finish in under a second.
-- Zones are local, national and international. Customer tiers are standard and gold.
-- The in-memory store lives in `parcelo/store.py` and is shared through `db`.
-- Read the ticket twice before starting and keep the change small.
-- Function names use snake_case. Modules are grouped by business area.
-"""
+PLACEBO = "\n## Your notes from earlier work in this repository\n" + (ORG / "placebo.md").read_text()
 
 
 def _placebo_context(state, ticket):

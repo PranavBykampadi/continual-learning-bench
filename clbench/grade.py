@@ -7,10 +7,9 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from clbench.model import ORG, ROOT, Feedback
+from clbench.model import ORG, PACK, Feedback
 
 IGNORED = {"__pycache__", ".pytest_cache", "_hidden", ".git"}
-SNAPSHOT_OVERLAYS = {"a": [], "b": ["migration"]}
 
 
 def overlay(source, target):
@@ -23,16 +22,16 @@ _built = {}
 def snapshot_dir(name):
     """Each process builds its own copy, so parallel arms never share a directory."""
     if name not in _built:
-        target = Path(tempfile.mkdtemp(prefix=f"clb-snapshot-{name}-")) / "parcelo"
+        target = Path(tempfile.mkdtemp(prefix=f"clb-snapshot-{name}-")) / PACK["workspace"]
         overlay(ORG / "seed", target)
-        for layer in SNAPSHOT_OVERLAYS[name]:
+        for layer in PACK["snapshots"][name]:
             overlay(ORG / layer, target)
         _built[name] = target
     return _built[name]
 
 
 def new_workspace(snapshot):
-    workspace = Path(tempfile.mkdtemp(prefix="clb-")) / "parcelo"
+    workspace = Path(tempfile.mkdtemp(prefix="clb-")) / PACK["workspace"]
     overlay(snapshot_dir(snapshot), workspace)
     return workspace
 
@@ -101,7 +100,7 @@ def grade(ticket, workspace):
     (hidden / "manifest.json").write_text(json.dumps(manifest(workspace, ticket.snapshot)))
 
     hidden_results = _run_pytest(workspace, "_hidden")
-    repo_results = _run_pytest(workspace, "tests")
+    repo_results = _run_pytest(workspace, PACK["repo_tests"]) if PACK.get("repo_tests") else {}
     shutil.rmtree(hidden)
 
     ci_failures, violated = [], set()

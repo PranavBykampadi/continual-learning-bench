@@ -20,9 +20,9 @@ This prototype covers those three gaps at small scale. It also gives the agent t
 
 ### The organization
 
-`org/seed/` is `parcelo`, a small shipping service written for this benchmark, so no model has seen it. It is written in two styles on purpose. Older modules use floats for money, `datetime.now()`, `uuid`, `ValueError`, and `print`. One newer module follows the rules the team now enforces. An agent that copies the code around it gets the rules wrong about as often as right.
+`orgs/parcelo/seed/` is `parcelo`, a small shipping service written for this benchmark, so no model has seen it. It is written in two styles on purpose. Older modules use floats for money, `datetime.now()`, `uuid`, `ValueError`, and `print`. One newer module follows the rules the team now enforces. An agent that copies the code around it gets the rules wrong about as often as right.
 
-`org/conventions.json` holds the nine team rules. Each rule has the handbook sentence that the oracle arm sees and the review comment that a reviewer writes when the rule is broken.
+`orgs/parcelo/conventions.json` holds the nine team rules. Each rule has the handbook sentence that the oracle arm sees and the review comment that a reviewer writes when the rule is broken.
 
 | id | rule |
 |---|---|
@@ -36,11 +36,11 @@ This prototype covers those three gaps at small scale. It also gives the agent t
 | `tests` | new tests go in a new file under `tests/unit/` |
 | `no_legacy` | never import `parcelo.legacy` |
 
-After ticket 14 the team migrates from the audit log to an events outbox (`org/migration/`). The rule the agent learned in the first half is now wrong. The benchmark uses that change to measure how fast a learner drops a stale rule.
+After ticket 14 the team migrates from the audit log to an events outbox (`orgs/parcelo/migration/`). The rule the agent learned in the first half is now wrong. The benchmark uses that change to measure how fast a learner drops a stale rule.
 
 ### The company's written knowledge
 
-`org/knowledge/` is a simulated history of the team: 248 Slack messages in six channels, 8 Notion pages, and 6 old pull request threads. About 4% of the Slack messages bear on a rule. The rest is deploys, on-call, customer problems, and lunch.
+`orgs/parcelo/knowledge/` is a simulated history of the team: 248 Slack messages in six channels, 8 Notion pages, and 6 old pull request threads. About 4% of the Slack messages bear on a rule. The rest is deploys, on-call, customer problems, and lunch.
 
 Each rule is planted in a different way, so the benchmark can tell apart the ways written knowledge fails:
 
@@ -56,13 +56,13 @@ Each rule is planted in a different way, so the benchmark can tell apart the way
 | `no_legacy` | a junior engineer says importing it is fine. A senior engineer says the opposite a month later. |
 | `tests` | nothing is written anywhere. Only a reviewer can teach this rule. |
 
-One ticket happens per day, starting 2026-03-02. At each ticket the agent gets a `../company/` folder that holds only what was dated before that day, so the migration announcement does not exist until ticket 15. `python -m clbench.knowledge` checks the planted evidence against `org/knowledge/evidence.json`: every needle is present, the right evidence is visible at each rule's first ticket, nothing announces the migration early, and no document names a ticket or says where tests go.
+One ticket happens per day, starting 2026-03-02. At each ticket the agent gets a `../company/` folder that holds only what was dated before that day, so the migration announcement does not exist until ticket 15. `python -m clbench.knowledge` checks the planted evidence against `orgs/parcelo/knowledge/evidence.json`: every needle is present, the right evidence is visible at each rule's first ticket, nothing announces the migration early, and no document names a ticket or says where tests go.
 
 `--knowledge available` tells the agent the folder exists. `--knowledge directed` also tells the agent to search the folder before it writes code. Arms that use the folder carry `+org` or `+org-directed` in their name.
 
 ### A ticket
 
-Each directory in `org/tickets/` holds:
+Each directory in `orgs/parcelo/tickets/` holds:
 
 - `ticket.json`: the text the agent sees, and the list of rules the ticket exercises. The text never mentions a rule.
 - `hidden/test_ci.py`: functional tests. They accept both the old style and the new style.

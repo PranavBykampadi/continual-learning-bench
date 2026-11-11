@@ -7,15 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from clbench.grade import overlay
+from clbench.model import PACK
 
-PROMPT = """You are a software engineer at a company, working in the `parcelo` service repository in the current directory.
-Complete the ticket below by editing the code. You get one attempt. When you stop, your change goes to CI and code review.
-You can run the existing tests with `python -m pytest -q`. Work only inside this directory.
-{context}
-# Ticket {id}: {title}
-
-{body}
-"""
+PROMPT = PACK["intro"] + "\n{context}\n# Ticket {id}: {title}\n\n{body}\n"
 
 
 @dataclass
