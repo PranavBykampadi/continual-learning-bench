@@ -75,10 +75,43 @@ def _placebo_context(state, ticket):
     return PLACEBO
 
 
+MEMDIR_CONTEXT = """
+You have a private folder `../memory/` that you own. It is the only thing that carries over between tickets.
+Read it before you start. You may also write to it while you work.
+"""
+
+MEMDIR_UPDATE = """You are {role}. You just finished a ticket and received the feedback below.
+The current directory is your private memory folder. It is the only thing that carries over to future tickets.
+Update its files so that you do better on FUTURE, DIFFERENT tickets at this company. Organise it however you like.
+
+## Ticket {id}: {title}
+{body}
+
+## Your change
+{diff}
+
+## Feedback
+{feedback}
+"""
+
+
+def _memdir_context(state, ticket):
+    state.setdefault("files", {})
+    return MEMDIR_CONTEXT
+
+
+def _memdir_observe(state, ticket, diff, feedback_text, reflect):
+    prompt = MEMDIR_UPDATE.format(
+        role=PACK["role"], id=ticket.id, title=ticket.title, body=ticket.body, diff=diff, feedback=feedback_text,
+    )
+    return reflect(prompt, tools="files")[1]
+
+
 LEARNERS = {
     "placebo": (_placebo_context, _no_observe),
     "none": (_no_context, _no_observe),
     "oracle": (_oracle_context, _no_observe),
     "history": (_history_context, _history_observe),
     "notes": (_notes_context, _notes_observe),
+    "memdir": (_memdir_context, _memdir_observe),
 }

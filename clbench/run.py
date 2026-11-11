@@ -4,7 +4,7 @@ import random
 import shutil
 import tempfile
 
-from clbench.agents import claude, make_solver
+from clbench.agents import make_backend, make_solver
 from clbench.feedback import FEEDBACK_MODES
 from clbench.grade import diff_text, grade, new_workspace
 from clbench.knowledge import ARM_SUFFIX, KNOWLEDGE_MODES, materialize
@@ -20,16 +20,40 @@ def ordered(tickets, order, seed):
     return shuffled
 
 
+MEMORY_FILE_LIMIT = 20000
+MEMORY_FILES = 40
+
+
+def write_tree(folder, files):
+    for name, text in files.items():
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(text)
+    folder.mkdir(parents=True, exist_ok=True)
+
+
+def read_tree(folder):
+    """The agent's memory folder as {relative path: text}. Capped so memory cannot grow without bound."""
+    files = {}
+    for path in sorted(p for p in folder.rglob("*") if p.is_file())[:MEMORY_FILES]:
+        try:
+            files[str(path.relative_to(folder))] = path.read_text()[:MEMORY_FILE_LIMIT]
+        except UnicodeDecodeError:
+            continue
+    return files
+
+
 def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, limit=None, knowledge="none"):
     context_of, observe = LEARNERS[learner]
     render = FEEDBACK_MODES[feedback_mode]
     solve = make_solver(agent)
-    model = agent.split(":", 1)[1] if agent.startswith("claude:") else None
+    backend = make_backend(agent)
+    memory = None
 
-    def reflect(prompt):
-        if model is None:
+    def reflect(prompt, tools=""):
+        """One extra model call after feedback. With tools, it runs inside the agent's memory folder."""
+        if backend is None:
             return "", 0.0
-        text, result = claude(prompt, model, tempfile.mkdtemp(prefix="clb-reflect-"), "", budget_usd=0.5)
+        text, result = backend(prompt, memory if tools else tempfile.mkdtemp(prefix="clb-reflect-"), tools)
         return text, result.cost_usd
 
     arm = f"{learner}-{feedback_mode}" + ARM_SUFFIX[knowledge]
@@ -48,10 +72,15 @@ def run_arm(run_name, learner, feedback_mode, agent, order="stream", seed=0, lim
         if KNOWLEDGE_MODES[knowledge]:
             materialize(workspace.parent / "company", position)
             context = KNOWLEDGE_MODES[knowledge] + context
+        memory = workspace.parent / "memory"
+        if "files" in state:
+            write_tree(memory, state["files"])
         result = solve(ticket, context, workspace)
         diff = diff_text(workspace, ticket.snapshot)
         feedback = grade(ticket, workspace)
-        learn_cost = observe(state, ticket, diff, render(feedback), reflect)
+        learn_cost = observe(state, ticket, diff, render(feedback, ticket), reflect)
+        if "files" in state:
+            state["files"] = read_tree(memory)
         attempt = Attempt(
             position=position, ticket_id=ticket.id, feedback=feedback, cost_usd=result.cost_usd,
             turns=result.turns, seconds=round(result.seconds, 1), context_chars=len(context),
