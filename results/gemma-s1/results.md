@@ -2,26 +2,26 @@
 
 | arm | tickets | CI pass | compliance | hidden-rule compliance | first-try merge | early / mid / late compliance | gain vs stateless (95% CI) | oracle gap closed | repeat-violation rate | $ per ticket |
 |---|---|---|---|---|---|---|---|---|---|---|
-| none-rich | 24 | 0.83 | 0.09 | 0.07 | 0.00 | 0.12 / 0.06 / 0.09 | n/a | n/a | 0.92 (n=84) | 0.000 |
-| notes-rich | 24 | 0.83 | 0.74 | 0.73 | 0.38 | 0.66 / 0.78 / 0.77 | +0.64 (+0.53, +0.75) | 84% | 0.19 (n=84) | 0.000 |
-| oracle-rich | 24 | 0.83 | 0.85 | 0.83 | 0.62 | 0.84 / 0.78 / 0.94 | +0.76 (+0.66, +0.84) | 100% | 0.31 (n=32) | 0.000 |
+| none-rich | 40 | 0.88 | 0.09 | 0.12 | 0.00 | 0.12 / 0.08 / 0.07 | n/a | n/a | 0.93 (n=160) | 0.000 |
+| notes-rich | 40 | 0.88 | 0.76 | 0.76 | 0.30 | 0.73 / 0.74 / 0.82 | +0.67 (+0.59, +0.75) | 90% | 0.17 (n=162) | 0.000 |
+| oracle-rich | 40 | 0.88 | 0.84 | 0.88 | 0.47 | 0.83 / 0.88 / 0.80 | +0.75 (+0.68, +0.81) | 100% | 0.31 (n=70) | 0.000 |
 
-Hidden rules are the ones the stateless arm follows less than half the time: `audit`, `changelog`, `clock`, `errors`, `events`, `ids`, `money`, `tests`.
+Hidden rules, which a stateless frontier model follows less than half the time: `idempotent`, `money`, `no_legacy`, `settings`, `sorted`, `tests`.
 
 ## Compliance by how many times the agent has met the convention
 
 | arm | 1st exposure | 2nd to 3rd | 4th and later |
 |---|---|---|---|
-| none-rich | 0.22 | 0.06 | 0.09 |
-| notes-rich | 0.22 | 0.67 | 0.82 |
-| oracle-rich | 0.89 | 0.72 | 0.87 |
+| none-rich | 0.21 | 0.07 | 0.08 |
+| notes-rich | 0.14 | 0.71 | 0.85 |
+| oracle-rich | 0.86 | 0.75 | 0.84 |
 
-## After the migration (`events` replaces `audit`)
+## Rules introduced by a mid-stream change
 
-| arm | `events` outcomes in order (1 = followed) |
-|---|---|
-| none-rich | 0 0 0 0 0 0 0 0 |
-| notes-rich | 0 1 1 1 1 1 1 1 |
-| oracle-rich | 1 1 1 1 1 1 1 1 |
+| arm | `events` in order (1 = followed) | `changelog2` in order (1 = followed) | `docs_api` in order (1 = followed) |
+|---|---|---|---|
+| none-rich | 0000000000000000 | 00000000 | 000000000000 |
+| notes-rich | 0111111111111111 | 01100111 | 011001010000 |
+| oracle-rich | 1111111111111101 | 11111111 | 001000000001 |
 
 ![learning curve](curve.svg)

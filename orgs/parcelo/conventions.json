@@ -7,7 +7,8 @@
       "c"
     ],
     "rule": "New code represents currency amounts as `parcelo.money.Money` (integer cents). Never return or store a float amount from new functions. Use `Money.parse(...)` to convert values that come from older float code.",
-    "review_comment": "This returns a raw float for a currency amount. New code has to use `Money` from `parcelo.money` (wrap older float values with `Money.parse`). We stopped passing floats around for money after the rounding incident."
+    "review_comment": "This returns a raw float for a currency amount. New code has to use `Money` from `parcelo.money` (wrap older float values with `Money.parse`). We stopped passing floats around for money after the rounding incident.",
+    "hidden": true
   },
   {
     "id": "clock",
@@ -17,7 +18,8 @@
       "c"
     ],
     "rule": "Read the current time only through `parcelo.clock.now()`. Never call `datetime.now()`, `datetime.utcnow()` or `time.time()` in new code.",
-    "review_comment": "Please don't call `datetime.now()`/`utcnow()` directly. Use `clock.now()` from `parcelo.clock` so times are UTC-aware and tests can freeze them."
+    "review_comment": "Please don't call `datetime.now()`/`utcnow()` directly. Use `clock.now()` from `parcelo.clock` so times are UTC-aware and tests can freeze them.",
+    "hidden": false
   },
   {
     "id": "errors",
@@ -27,7 +29,8 @@
       "c"
     ],
     "rule": "New code signals expected failures by raising `parcelo.errors.DomainError` with a code from `errors.CODES` (add a new `E_...` code to `CODES` if none fits). Never raise ValueError, KeyError or a bare Exception for domain failures.",
-    "review_comment": "New code shouldn't raise `ValueError`/`KeyError` for domain failures. Raise `DomainError` from `parcelo.errors` with a registered `E_...` code (add one to `CODES` if nothing fits), the API layer maps those codes to responses."
+    "review_comment": "New code shouldn't raise `ValueError`/`KeyError` for domain failures. Raise `DomainError` from `parcelo.errors` with a registered `E_...` code (add one to `CODES` if nothing fits), the API layer maps those codes to responses.",
+    "hidden": false
   },
   {
     "id": "audit",
@@ -35,7 +38,8 @@
       "a"
     ],
     "rule": "Every new function that changes stored state calls `parcelo.audit.record(action, entity_id, ...)` after the change, with the id of the entity it changed.",
-    "review_comment": "This changes stored state without an audit entry. Every mutation needs `audit.record(action, entity_id, ...)` with the id of the entity you changed, compliance reads that log."
+    "review_comment": "This changes stored state without an audit entry. Every mutation needs `audit.record(action, entity_id, ...)` with the id of the entity you changed, compliance reads that log.",
+    "hidden": false
   },
   {
     "id": "events",
@@ -44,7 +48,8 @@
       "c"
     ],
     "rule": "Every new function that changes stored state calls `parcelo.events.emit(name, entity_id, ...)` after the change. Do not call `audit.record` in new code, the audit log is now fed from the events outbox.",
-    "review_comment": "We moved off `audit.record` last sprint. New mutations must call `events.emit(name, entity_id, ...)` from `parcelo.events` instead, and must not call `audit.record` directly anymore (the audit log is fed from the outbox)."
+    "review_comment": "We moved off `audit.record` last sprint. New mutations must call `events.emit(name, entity_id, ...)` from `parcelo.events` instead, and must not call `audit.record` directly anymore (the audit log is fed from the outbox).",
+    "hidden": false
   },
   {
     "id": "ids",
@@ -54,7 +59,8 @@
       "c"
     ],
     "rule": "Create ids for new entities with `parcelo.ids.new_id(prefix)` using a short lowercase prefix. Never use `uuid` or hand-built ids in new code.",
-    "review_comment": "Don't build ids with `uuid` or by hand. Use `ids.new_id(\"<prefix>\")` from `parcelo.ids`, support tooling depends on the `prefix_000001` format."
+    "review_comment": "Don't build ids with `uuid` or by hand. Use `ids.new_id(\"<prefix>\")` from `parcelo.ids`, support tooling depends on the `prefix_000001` format.",
+    "hidden": false
   },
   {
     "id": "changelog",
@@ -63,7 +69,8 @@
       "b"
     ],
     "rule": "Every ticket adds one bullet under `## Unreleased` in CHANGELOG.md, in the form `- area: what changed (TICKET-ID)`.",
-    "review_comment": "Missing changelog entry. Every ticket needs a bullet under `## Unreleased` in CHANGELOG.md that ends with the ticket id in parentheses, like `- invoices: add void (PRC-123)`."
+    "review_comment": "Missing changelog entry. Every ticket needs a bullet under `## Unreleased` in CHANGELOG.md that ends with the ticket id in parentheses, like `- invoices: add void (PRC-123)`.",
+    "hidden": false
   },
   {
     "id": "tests",
@@ -73,7 +80,8 @@
       "c"
     ],
     "rule": "Every ticket adds tests for the new behavior in a new file under `tests/unit/`. Do not add tests to the top-level `tests/` directory, that suite is frozen.",
-    "review_comment": "I don't see new tests in the right place. Every ticket needs a new test file under `tests/unit/` covering the change. The top-level `tests/` files are frozen, please don't add tests there."
+    "review_comment": "I don't see new tests in the right place. Every ticket needs a new test file under `tests/unit/` covering the change. The top-level `tests/` files are frozen, please don't add tests there.",
+    "hidden": true
   },
   {
     "id": "no_legacy",
@@ -83,7 +91,8 @@
       "c"
     ],
     "rule": "Never import from `parcelo.legacy` in new code, that package is being deleted. Reimplement what you need next to the new code.",
-    "review_comment": "Please don't import from `parcelo.legacy`. That package is scheduled for deletion, so new code must not depend on it. Reimplement the small piece you need next to your change."
+    "review_comment": "Please don't import from `parcelo.legacy`. That package is scheduled for deletion, so new code must not depend on it. Reimplement the small piece you need next to your change.",
+    "hidden": true
   },
   {
     "id": "changelog2",
@@ -91,7 +100,8 @@
       "c"
     ],
     "rule": "Every ticket adds one bullet under `## Unreleased` in CHANGELOG.md, in the form `- [TICKET-ID] area: what changed`. The ticket id goes first, in brackets, and not at the end of the line.",
-    "review_comment": "Wrong changelog format. Since the release tooling change every bullet under `## Unreleased` starts with the ticket id in brackets, like `- [PRC-123] invoices: add void`. An id in parentheses at the end of the line doesn't get picked up by the release notes script."
+    "review_comment": "Wrong changelog format. Since the release tooling change every bullet under `## Unreleased` starts with the ticket id in brackets, like `- [PRC-123] invoices: add void`. An id in parentheses at the end of the line doesn't get picked up by the release notes script.",
+    "hidden": false
   },
   {
     "id": "sorted",
@@ -100,7 +110,8 @@
       "c"
     ],
     "rule": "Every new function that returns a list of entities returns them sorted by `id` ascending, never in storage order.",
-    "review_comment": "This returns the list in storage order. Anything that returns a list of entities has to be sorted by `id` ascending (`sorted(items, key=lambda x: x.id)`). The support export diffs these lists between runs and needs a stable order."
+    "review_comment": "This returns the list in storage order. Anything that returns a list of entities has to be sorted by `id` ascending (`sorted(items, key=lambda x: x.id)`). The support export diffs these lists between runs and needs a stable order.",
+    "hidden": true
   },
   {
     "id": "idempotent",
@@ -109,7 +120,8 @@
       "c"
     ],
     "rule": "Every new function that moves an entity into a state is idempotent: calling it again on an entity that is already in the target state returns the entity unchanged, without raising and without emitting another event.",
-    "review_comment": "Calling this twice on the same entity raises. Our callers retry on timeouts, so a state change on an entity that is already in the target state has to return it unchanged, with no error and no second event."
+    "review_comment": "Calling this twice on the same entity raises. Our callers retry on timeouts, so a state change on an entity that is already in the target state has to return it unchanged, with no error and no second event.",
+    "hidden": true
   },
   {
     "id": "settings",
@@ -118,7 +130,8 @@
       "c"
     ],
     "rule": "Business thresholds, limits and rates used by new code are UPPER_CASE constants in `parcelo/settings.py` (create the module if it does not exist), imported where they are used. No bare numbers for them in function bodies.",
-    "review_comment": "There is a bare number for a business threshold/rate in the function body. Put it in `parcelo/settings.py` as a named UPPER_CASE constant and import it. Finance asks us to change these and wants one place to look."
+    "review_comment": "There is a bare number for a business threshold/rate in the function body. Put it in `parcelo/settings.py` as a named UPPER_CASE constant and import it. Finance asks us to change these and wants one place to look.",
+    "hidden": true
   },
   {
     "id": "docs_api",
@@ -127,6 +140,7 @@
       "c"
     ],
     "rule": "Every new public function gets a line in `docs/api.md`, in the form ``- `module.function(args)`: what it does``.",
-    "review_comment": "New public function but nothing in `docs/api.md`. Please add a line there like ``- `shipments.mark_lost(shipment_id)`: mark a shipment lost``. Support tooling and the partner team read that file."
+    "review_comment": "New public function but nothing in `docs/api.md`. Please add a line there like ``- `shipments.mark_lost(shipment_id)`: mark a shipment lost``. Support tooling and the partner team read that file.",
+    "hidden": false
   }
 ]

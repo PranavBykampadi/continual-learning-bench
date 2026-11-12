@@ -15,6 +15,7 @@ class Convention:
     rule: str
     review_comment: str
     snapshots: tuple
+    hidden: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ class Attempt:
 def load_conventions():
     raw = json.loads((ORG / "conventions.json").read_text())
     return {
-        c["id"]: Convention(c["id"], c["rule"], c["review_comment"], tuple(c["snapshots"]))
+        c["id"]: Convention(c["id"], c["rule"], c["review_comment"], tuple(c["snapshots"]), c.get("hidden", False))
         for c in raw
     }
 

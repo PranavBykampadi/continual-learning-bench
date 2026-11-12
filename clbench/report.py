@@ -3,7 +3,7 @@ import random
 import sys
 from collections import defaultdict
 
-from clbench.model import ROOT, Attempt
+from clbench.model import PACK, ROOT, Attempt, load_conventions
 
 COLORS = ["#888888", "#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
 
@@ -50,7 +50,13 @@ def exposures(attempts):
 
 
 def hidden_rules(baselines):
-    """Rules the stateless agent follows less than half the time, so following them takes learning, not reading."""
+    """Rules that take learning, not reading: the ones a stateless frontier model follows less than half the time.
+
+    A pack declares them in conventions.json. Without a declaration, fall back to this run's own stateless arm.
+    """
+    declared = {c.id for c in load_conventions().values() if c.hidden}
+    if declared:
+        return declared
     pooled = defaultdict(list)
     for attempts in baselines:
         for rule, outcomes in exposures(attempts).items():
@@ -140,17 +146,21 @@ def render(run_name):
             f"{hidden_compliance(attempts, hidden):.2f} | {mean(a.feedback.merged for a in attempts):.2f} | {segments} | {gain} | {closed} | "
             f"{repeat:.2f} (n={chances}) | {cost:.3f} |"
         )
-    lines += ["", "Hidden rules are the ones the stateless arm follows less than half the time: "
+    lines += ["", "Hidden rules, which a stateless frontier model follows less than half the time: "
               + (", ".join(f"`{r}`" for r in sorted(hidden)) or "none") + "."]
     lines += ["", "## Compliance by how many times the agent has met the convention", "",
               "| arm | 1st exposure | 2nd to 3rd | 4th and later |", "|---|---|---|---|"]
     for name, attempts in arms.items():
         lines.append(f"| {name} | " + " | ".join(f"{v:.2f}" for v in compliance_by_exposure(attempts)) + " |")
-    lines += ["", "## After the migration (`events` replaces `audit`)", "",
-              "| arm | `events` outcomes in order (1 = followed) |", "|---|---|"]
+    first = next(iter(PACK["snapshots"]))
+    changed = [c.id for c in load_conventions().values() if first not in c.snapshots and not c.hidden]
+    lines += ["", "## Rules introduced by a mid-stream change", "",
+              "| arm | " + " | ".join(f"`{r}` in order (1 = followed)" for r in changed) + " |",
+              "|---|" + "---|" * len(changed)]
     for name, attempts in arms.items():
-        outcomes = exposures(attempts).get("events", [])
-        lines.append(f"| {name} | {' '.join(str(int(o)) for o in outcomes) or 'n/a'} |")
+        seen = exposures(attempts)
+        lines.append(f"| {name} | " + " | ".join(
+            "".join(str(int(o)) for o in seen.get(r, [])) or "n/a" for r in changed) + " |")
     lines += ["", "![learning curve](curve.svg)", ""]
     out = ROOT / "results" / run_name
     out.mkdir(parents=True, exist_ok=True)
@@ -190,7 +200,7 @@ def render_combined(run_names):
             f"{cell([repeat_violation_rate(r)[0] for r in per_run])} | "
             f"{cell([mean(a.feedback.compliance for a in thirds(r)[2]) for r in per_run])} |"
         )
-    lines += ["", "Hidden rules are the ones the stateless arm follows less than half the time, runs pooled: "
+    lines += ["", "Hidden rules, which a stateless frontier model follows less than half the time: "
               + (", ".join(f"`{r}`" for r in sorted(hidden)) or "none") + "."]
     rules = sorted({rule for run in runs for attempts in run.values() for rule in exposures(attempts)})
     lines += ["", "## Compliance per rule, all runs pooled", "",
