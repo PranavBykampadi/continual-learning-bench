@@ -1,0 +1,34 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 02:00:56
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4111", "action": "verify", "customer": "C-1011", "order": "MP-20111", "ok": true}
++{"n": 2, "case": "CS-4111", "action": "escalate", "team": "finance-ops", "note": "Refund request, $150.00 on order MP-20111 (customer C-1011, identity verified). Reason: customer says the rug delivered is 4x6 but they ordered 5x8; order record lists Wool rug 5x8, so please check what shipped. Refunded to date: $0.00. Refund over $40, not issued by support."}
++{"n": 3, "case": "CS-4111", "action": "tag", "label": "billing"}
++{"n": 4, "case": "CS-4111", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 02:00:56
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4111": {
++    "status": "closed",
++    "tags": [
++      "billing"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4111.md b/outbox/CS-4111.md
+--- a/outbox/CS-4111.md	1969-12-31 19:00:00
++++ b/outbox/CS-4111.md	2026-11-12 02:00:59
+@@ -0,0 +1,6 @@
++Bonjour Étienne,
++
++Merci d'avoir contacté Marlowe & Pine, et désolés pour le souci avec votre tapis. Pour la commande MP-20111, nous avons bien reçu votre demande de remboursement de 150,00 $ pour le tapis en laine 5x8 que vous aviez commandé, alors que vous indiquez avoir reçu un modèle 4x6. Votre demande a été transmise à notre équipe finance pour examen. Nous ne pouvons pas encore confirmer le montant ni le délai du remboursement, mais l'équipe reviendra vers vous à ce sujet.
++
++Warmly,
++The Marlowe & Pine Crew

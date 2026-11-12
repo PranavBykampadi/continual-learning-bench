@@ -1,0 +1,40 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 01:58:39
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4111", "action": "verify", "customer": "C-1011", "order": "MP-20111", "ok": true}
++{"n": 2, "case": "CS-4111", "action": "escalate", "team": "billing-review", "note": "refund 150.00 on MP-20111, customer reports 4x6 received instead of ordered 5x8"}
++{"n": 3, "case": "CS-4111", "action": "tag", "label": "billing"}
++{"n": 4, "case": "CS-4111", "action": "tag", "label": "wrong-item"}
++{"n": 5, "case": "CS-4111", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 01:58:39
+@@ -1 +1,12 @@
+-{}
++{
++  "CS-4111": {
++    "status": "closed",
++    "tags": [
++      "billing",
++      "wrong-item"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4111.md b/outbox/CS-4111.md
+--- a/outbox/CS-4111.md	1969-12-31 19:00:00
++++ b/outbox/CS-4111.md	2026-11-12 01:58:38
+@@ -0,0 +1,10 @@
++Hi Etienne,
++
++Thank you for getting in touch about order MP-20111. I'm sorry the rug you received is not the 5x8 you ordered.
++
++I've passed your request for a $150 refund to our billing review team, who handle refunds for size mix-ups like this. They will take it from here. I haven't issued the refund myself, so please expect it to come from them rather than from this message.
++
++Once you've reordered, we'll be glad to help with that as well.
++
++Warm regards,
++The Marlowe & Pine Crew

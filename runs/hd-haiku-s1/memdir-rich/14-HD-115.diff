@@ -1,0 +1,51 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 02:08:29
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4115", "action": "verify", "customer": "C-1015", "order": "MP-20115", "ok": true}
++{"n": 2, "case": "CS-4115", "action": "escalate", "team": "finance-ops", "note": "Item: Soy candle set (MP-20115), arrived melted into a single block. Amount requested: $45.00. Order total: $45.00. Amount is over the $40 self-issue limit, so no refund was run. Refunded: $0.00."}
++{"n": 3, "case": "CS-4115", "action": "set-email", "customer": "C-1015", "old": "olivia.grant@example.com", "new": "olivia.grant@example.net"}
++{"n": 4, "case": "CS-4115", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4115", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 02:08:29
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4115": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 02:08:25
+@@ -114,7 +114,7 @@
+   {
+     "id": "C-1015",
+     "name": "Olivia Grant",
+-    "email": "olivia.grant@example.com",
++    "email": "olivia.grant@example.net",
+     "locale": "en-US",
+     "tier": "standard",
+     "credit_balance": 0.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4115.md b/outbox/CS-4115.md
+--- a/outbox/CS-4115.md	1969-12-31 19:00:00
++++ b/outbox/CS-4115.md	2026-11-12 02:08:28
+@@ -0,0 +1,10 @@
++Hi Olivia,
++
++Thank you for letting us know that your soy candle set (order MP-20115) arrived melted into a block. We're sorry about that, and we understand how disappointing it is.
++
++Your refund request has been passed to the team that reviews refunds over $40. We have not issued a refund ourselves, so please don't expect one yet. The review team will follow up with you.
++
++Your account email has also been updated to olivia.grant@example.net. Please use that address to sign in from now on.
++
++Warmly,
++The Marlowe & Pine Crew

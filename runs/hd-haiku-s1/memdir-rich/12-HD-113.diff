@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 02:06:20
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4113", "action": "verify", "customer": "C-1013", "order": "MP-20113", "ok": true}
++{"n": 2, "case": "CS-4113", "action": "credit", "customer": "C-1013", "amount": 15.0}
++{"n": 3, "case": "CS-4113", "action": "escalate", "team": "tier2", "note": "Goodwill excess. Customer C-1013 (Ana Beatriz Lima) on order MP-20113 (Rattan basket, order total $66.00, shipping $8.00, in transit, carrier Northline NL-902215). Customer requested $50.00 goodwill credit for late delivery. Issued $15.00 (goodwill cap per case). Excess requested beyond cap: $35.00. Refunded: $0.00. No refund requested or issued. Customer also asked for an exact delivery date; reply gave tracking number only, no date."}
++{"n": 4, "case": "CS-4113", "action": "tag", "label": "shipping"}
++{"n": 5, "case": "CS-4113", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 02:06:20
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4113": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": [
++      "tier2"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 02:06:05
+@@ -101,7 +101,7 @@
+     "email": "ana.lima@example.com",
+     "locale": "pt-BR",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1014",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4113.md b/outbox/CS-4113.md
+--- a/outbox/CS-4113.md	1969-12-31 19:00:00
++++ b/outbox/CS-4113.md	2026-11-12 02:06:16
+@@ -0,0 +1,12 @@
++Olá Ana,
++
++Thank you for your message, and I'm sorry your order (MP-20113, Rattan basket) has taken longer than it should have. I can see the order on your account.
++
++Your package is still with our carrier, Northline, under tracking number NL-902215. The carrier has the latest status on the delivery, so please follow the tracking number on Northline's tracking page for the most current updates. I'm not able to give you an exact delivery date.
++
++I've added $15.00 in store credit to your account as a thank you for your patience. It will apply automatically at checkout.
++
++You also asked for $50.00 in credit. The amount I'm able to add on my own is $15.00, so I've passed the rest of your request to our team for review. I'm not able to promise any further credit at this point.
++
++Warmly,
++The Marlowe & Pine Crew

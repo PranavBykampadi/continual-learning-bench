@@ -1,0 +1,36 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 02:00:23
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4110", "action": "verify", "customer": "C-1010", "order": "MP-20110", "ok": true}
++{"n": 2, "case": "CS-4110", "action": "escalate", "team": "billing-review", "note": "refund 55.00 on MP-20110 (order total 55.00, refunded to date 0.00). Customer reports two mugs from the stoneware mug set arrived chipped; requests refund of 55.00. Amount is at or under 75, approval path to be confirmed by billing-review."}
++{"n": 3, "case": "CS-4110", "action": "tag", "label": "shipping"}
++{"n": 4, "case": "CS-4110", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 02:00:23
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4110": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4110.md b/outbox/CS-4110.md
+--- a/outbox/CS-4110.md	1969-12-31 19:00:00
++++ b/outbox/CS-4110.md	2026-11-12 02:00:23
+@@ -0,0 +1,8 @@
++Hi Hana,
++
++I'm sorry the stoneware mugs from order MP-20110 arrived chipped. Thank you for letting us know.
++
++Your refund request for $55.00 has been sent to our billing team for review. A refund has not been issued yet, and I'm not able to confirm the amount or timing from here. You'll hear from us once the review is complete.
++
++Warmly,
++The Marlowe & Pine Crew
