@@ -78,8 +78,20 @@
 {"channel": "eng", "date": "2026-03-15", "time": "20:33", "author": "Lena", "text": ":+1:"}
 {"channel": "eng", "date": "2026-03-18", "time": "09:50", "author": "Farid", "text": "CI runners getting replaced this afternoon, if your job dies just rerun"}
 {"channel": "eng", "date": "2026-03-18", "time": "09:52", "author": "Kenji", "text": ":saluting_face:"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:05", "author": "Priya", "text": "found the 30 day cutoff hardcoded in three different functions and one of them was off by a day. where are we supposed to keep this kind of number"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:08", "author": "Tomasz", "text": "nowhere, that's the problem. rates.py has the zone table and everything else is inline"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:15", "author": "Dana", "text": "ok let's settle it. business thresholds and rates (limits, cutoffs, fee percentages, caps) go in `parcelo/settings.py` as UPPER_CASE constants and functions import them. no bare numbers like 30 or 0.015 in function bodies"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:17", "author": "Lena", "text": "does that cover things like the max number of open invoices per customer?"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:18", "author": "Dana", "text": "yes, anything finance or product might ask us to change. if the module doesn't exist on your branch just create it"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:19", "author": "Priya", "text": "and the old habit of keeping the number next to the code that uses it?"}
+{"channel": "eng", "date": "2026-03-19", "time": "10:21", "author": "Dana", "text": "that notion page is old, ignore it. settings.py from now on"}
 {"channel": "eng", "date": "2026-03-20", "time": "14:05", "author": "Tomasz", "text": "out monday, dentist round 2 :tooth:"}
 {"channel": "eng", "date": "2026-03-23", "time": "11:30", "author": "Owen", "text": "retro tomorrow, add stickies to the board"}
+{"channel": "eng", "date": "2026-03-23", "time": "15:02", "author": "Lena", "text": "partner team pinged again about a function that exists in the code but isn't in docs/api.md. I wrote down what we expect on the api reference page in notion, please read it"}
+{"channel": "eng", "date": "2026-04-02", "time": "10:02", "author": "Marcus", "text": "release tooling change starting tomorrow: changelog bullets under Unreleased now put the ticket id first in brackets, like `- [PRC-071] invoices: fix rounding on totals`. no more (PRC-071) at the end of the line"}
+{"channel": "eng", "date": "2026-04-02", "time": "10:04", "author": "Kenji", "text": "is that why there's a release_notes script in tools/ now?"}
+{"channel": "eng", "date": "2026-04-02", "time": "10:05", "author": "Marcus", "text": "yep, it only picks up the new format. old bullets already in the file stay as they are, we'll rewrite them when we cut 0.6"}
+{"channel": "eng", "date": "2026-04-02", "time": "10:07", "author": "Lena", "text": "the release process page in notion still says plain bullets with no ticket numbers, ignore that"}
 {"channel": "eng-reviews", "date": "2025-09-08", "time": "10:00", "author": "Kenji", "text": "#204 pls :pray: tiny, pins pip so the runners stop hanging"}
 {"channel": "eng-reviews", "date": "2025-09-08", "time": "10:30", "author": "Tomasz", "text": "looking"}
 {"channel": "eng-reviews", "date": "2025-09-29", "time": "15:15", "author": "Priya", "text": "can someone who knows the label printer integration look at #209, I don't trust myself there"}

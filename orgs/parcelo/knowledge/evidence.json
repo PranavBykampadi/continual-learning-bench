@@ -1,55 +1,315 @@
 {
   "money": [
-    {"file": "slack.jsonl", "date": "2025-10-20", "kind": "correct", "needle": "amounts are float dollars, we add floats and round at the end"},
-    {"file": "slack.jsonl", "date": "2025-10-20", "kind": "correct", "needle": "we already have the Money type (integer cents)"},
-    {"file": "slack.jsonl", "date": "2025-10-21", "kind": "correct", "needle": "new code uses `Money` from parcelo.money for amounts, no float amounts"},
-    {"file": "slack.jsonl", "date": "2025-10-21", "kind": "correct", "needle": "wrap it with Money.parse at the edge"},
-    {"file": "slack.jsonl", "date": "2025-10-21", "kind": "correct", "needle": "does Money.parse handle strings too?"},
-    {"file": "pulls/PR-226.md", "date": "2025-11-18", "kind": "correct", "needle": "new code uses `Money`, and if it has to take a float from old code"},
-    {"file": "pulls/PR-226.md", "date": "2025-11-18", "kind": "correct", "needle": "wraps it with `Money.parse` right where it reads it"}
+    {
+      "file": "slack.jsonl",
+      "date": "2025-10-20",
+      "kind": "correct",
+      "needle": "amounts are float dollars, we add floats and round at the end"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2025-10-20",
+      "kind": "correct",
+      "needle": "we already have the Money type (integer cents)"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2025-10-21",
+      "kind": "correct",
+      "needle": "new code uses `Money` from parcelo.money for amounts, no float amounts"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2025-10-21",
+      "kind": "correct",
+      "needle": "wrap it with Money.parse at the edge"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2025-10-21",
+      "kind": "correct",
+      "needle": "does Money.parse handle strings too?"
+    },
+    {
+      "file": "pulls/PR-226.md",
+      "date": "2025-11-18",
+      "kind": "correct",
+      "needle": "new code uses `Money`, and if it has to take a float from old code"
+    },
+    {
+      "file": "pulls/PR-226.md",
+      "date": "2025-11-18",
+      "kind": "correct",
+      "needle": "wraps it with `Money.parse` right where it reads it"
+    }
   ],
   "clock": [
-    {"file": "notion/postmortem-2025-12-01-invoice-dates.md", "date": "2025-12-04", "kind": "correct", "needle": "New code reads the current time only through `clock.now()`"},
-    {"file": "notion/postmortem-2025-12-01-invoice-dates.md", "date": "2025-12-04", "kind": "correct", "needle": "No `datetime.now()`, `datetime.utcnow()` or `time.time()` in new code"},
-    {"file": "notion/postmortem-2025-12-01-invoice-dates.md", "date": "2025-12-04", "kind": "correct", "needle": "can be pinned with `clock.set_fixed(...)`"}
+    {
+      "file": "notion/postmortem-2025-12-01-invoice-dates.md",
+      "date": "2025-12-04",
+      "kind": "correct",
+      "needle": "New code reads the current time only through `clock.now()`"
+    },
+    {
+      "file": "notion/postmortem-2025-12-01-invoice-dates.md",
+      "date": "2025-12-04",
+      "kind": "correct",
+      "needle": "No `datetime.now()`, `datetime.utcnow()` or `time.time()` in new code"
+    },
+    {
+      "file": "notion/postmortem-2025-12-01-invoice-dates.md",
+      "date": "2025-12-04",
+      "kind": "correct",
+      "needle": "can be pinned with `clock.set_fixed(...)`"
+    }
   ],
   "errors": [
-    {"file": "pulls/PR-252.md", "date": "2026-02-12", "kind": "correct", "needle": "new code shouldn't raise `ValueError` (or `KeyError`) for stuff like this"},
-    {"file": "pulls/PR-252.md", "date": "2026-02-12", "kind": "correct", "needle": "raise `DomainError` from `parcelo.errors` with a code that's registered"},
-    {"file": "pulls/PR-252.md", "date": "2026-02-12", "kind": "correct", "needle": "then add one. `CODES` is just a set in errors.py"},
-    {"file": "notion/support-reading-api-errors.md", "date": "2026-02-16", "kind": "correct", "needle": "New code raises `DomainError` with a registered `E_...` code"}
+    {
+      "file": "pulls/PR-252.md",
+      "date": "2026-02-12",
+      "kind": "correct",
+      "needle": "new code shouldn't raise `ValueError` (or `KeyError`) for stuff like this"
+    },
+    {
+      "file": "pulls/PR-252.md",
+      "date": "2026-02-12",
+      "kind": "correct",
+      "needle": "raise `DomainError` from `parcelo.errors` with a code that's registered"
+    },
+    {
+      "file": "pulls/PR-252.md",
+      "date": "2026-02-12",
+      "kind": "correct",
+      "needle": "then add one. `CODES` is just a set in errors.py"
+    },
+    {
+      "file": "notion/support-reading-api-errors.md",
+      "date": "2026-02-16",
+      "kind": "correct",
+      "needle": "New code raises `DomainError` with a registered `E_...` code"
+    }
   ],
   "audit": [
-    {"file": "notion/engineering-guidelines.md", "date": "2025-10-06", "kind": "correct", "needle": "Every state change must call `audit.record(action, entity_id, ...)`"}
+    {
+      "file": "notion/engineering-guidelines.md",
+      "date": "2025-10-06",
+      "kind": "correct",
+      "needle": "Every state change must call `audit.record(action, entity_id, ...)`"
+    }
   ],
   "events": [
-    {"file": "notion/engineering-guidelines.md", "date": "2025-10-06", "kind": "stale", "needle": "Every state change must call `audit.record(action, entity_id, ...)`"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "the events outbox has landed"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "new state changes must call `events.emit(name, entity_id, ...)`"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "do not call audit.record in new code"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "the audit log is now fed from the outbox"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "swap it for events.emit with the same entity id"},
-    {"file": "slack.jsonl", "date": "2026-03-15", "kind": "correct", "needle": "create_shipment in shipments.py is already migrated"}
+    {
+      "file": "notion/engineering-guidelines.md",
+      "date": "2025-10-06",
+      "kind": "stale",
+      "needle": "Every state change must call `audit.record(action, entity_id, ...)`"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "the events outbox has landed"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "new state changes must call `events.emit(name, entity_id, ...)`"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "do not call audit.record in new code"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "the audit log is now fed from the outbox"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "swap it for events.emit with the same entity id"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-15",
+      "kind": "correct",
+      "needle": "create_shipment in shipments.py is already migrated"
+    }
   ],
   "ids": [
-    {"file": "slack.jsonl", "date": "2026-01-08", "kind": "correct", "needle": "shipments work fine (shp_000412 etc)"},
-    {"file": "slack.jsonl", "date": "2026-01-08", "kind": "correct", "needle": "the console parses ids as prefix + number"},
-    {"file": "slack.jsonl", "date": "2026-01-08", "kind": "correct", "needle": "built by hand in the old invoice code with a chunk of a uuid"},
-    {"file": "slack.jsonl", "date": "2026-01-08", "kind": "correct", "needle": "anything new goes through the ids module and gets the prefix_000001 shape"}
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-08",
+      "kind": "correct",
+      "needle": "shipments work fine (shp_000412 etc)"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-08",
+      "kind": "correct",
+      "needle": "the console parses ids as prefix + number"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-08",
+      "kind": "correct",
+      "needle": "built by hand in the old invoice code with a chunk of a uuid"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-08",
+      "kind": "correct",
+      "needle": "anything new goes through the ids module and gets the prefix_000001 shape"
+    }
   ],
   "changelog": [
-    {"file": "notion/release-process.md", "date": "2025-09-12", "kind": "stale", "needle": "Keep the bullet short and plain, written for a customer"},
-    {"file": "notion/release-process.md", "date": "2025-09-12", "kind": "stale", "needle": "Don't put ticket numbers in it"},
-    {"file": "slack.jsonl", "date": "2026-02-09", "kind": "correct", "needle": "every bullet under Unreleased has to end with the ticket id in parentheses"},
-    {"file": "slack.jsonl", "date": "2026-02-09", "kind": "correct", "needle": "like `- invoices: fix rounding on totals (PRC-071)`"},
-    {"file": "slack.jsonl", "date": "2026-02-09", "kind": "correct", "needle": "everything has a ticket. if it doesnt, make one"},
-    {"file": "slack.jsonl", "date": "2026-02-09", "kind": "correct", "needle": "the release process page in notion still says plain bullets"}
+    {
+      "file": "notion/release-process.md",
+      "date": "2025-09-12",
+      "kind": "stale",
+      "needle": "Keep the bullet short and plain, written for a customer"
+    },
+    {
+      "file": "notion/release-process.md",
+      "date": "2025-09-12",
+      "kind": "stale",
+      "needle": "Don't put ticket numbers in it"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-02-09",
+      "kind": "correct",
+      "needle": "every bullet under Unreleased has to end with the ticket id in parentheses"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-02-09",
+      "kind": "correct",
+      "needle": "like `- invoices: fix rounding on totals (PRC-071)`"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-02-09",
+      "kind": "correct",
+      "needle": "everything has a ticket. if it doesnt, make one"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-02-09",
+      "kind": "correct",
+      "needle": "the release process page in notion still says plain bullets"
+    }
   ],
   "no_legacy": [
-    {"file": "slack.jsonl", "date": "2025-12-10", "kind": "wrong", "needle": "just import the helper from parcelo.legacy, it's fine"},
-    {"file": "slack.jsonl", "date": "2026-01-22", "kind": "correct", "needle": "parcelo.legacy is scheduled for deletion. new code must not import from it"},
-    {"file": "slack.jsonl", "date": "2026-01-22", "kind": "correct", "needle": "reimplement it next to your change"},
-    {"file": "slack.jsonl", "date": "2026-01-22", "kind": "correct", "needle": "existing imports get cleaned up when we delete the package"}
+    {
+      "file": "slack.jsonl",
+      "date": "2025-12-10",
+      "kind": "wrong",
+      "needle": "just import the helper from parcelo.legacy, it's fine"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-22",
+      "kind": "correct",
+      "needle": "parcelo.legacy is scheduled for deletion. new code must not import from it"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-22",
+      "kind": "correct",
+      "needle": "reimplement it next to your change"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-01-22",
+      "kind": "correct",
+      "needle": "existing imports get cleaned up when we delete the package"
+    }
   ],
-  "tests": []
+  "tests": [],
+  "changelog2": [
+    {
+      "file": "slack.jsonl",
+      "date": "2026-04-02",
+      "kind": "correct",
+      "needle": "changelog bullets under Unreleased now put the ticket id first in brackets"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-04-02",
+      "kind": "correct",
+      "needle": "like `- [PRC-071] invoices: fix rounding on totals`"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-04-02",
+      "kind": "correct",
+      "needle": "old bullets already in the file stay as they are"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-02-09",
+      "kind": "stale",
+      "needle": "every bullet under Unreleased has to end with the ticket id in parentheses"
+    }
+  ],
+  "settings": [
+    {
+      "file": "notion/pricing-and-fees-notes.md",
+      "date": "2025-11-10",
+      "kind": "stale",
+      "needle": "Keep a rate or fee next to the code that uses it"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-19",
+      "kind": "correct",
+      "needle": "business thresholds and rates (limits, cutoffs, fee percentages, caps) go in `parcelo/settings.py` as UPPER_CASE constants"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-19",
+      "kind": "correct",
+      "needle": "no bare numbers like 30 or 0.015 in function bodies"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-19",
+      "kind": "correct",
+      "needle": "if the module doesn't exist on your branch just create it"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-19",
+      "kind": "correct",
+      "needle": "that notion page is old, ignore it. settings.py from now on"
+    }
+  ],
+  "docs_api": [
+    {
+      "file": "notion/api-reference-docs.md",
+      "date": "2026-03-23",
+      "kind": "correct",
+      "needle": "add one line for it to `docs/api.md`, in the form `- `module.function(args)`: what it does`"
+    },
+    {
+      "file": "notion/api-reference-docs.md",
+      "date": "2026-03-23",
+      "kind": "correct",
+      "needle": "Skip private helpers"
+    },
+    {
+      "file": "slack.jsonl",
+      "date": "2026-03-23",
+      "kind": "correct",
+      "needle": "exists in the code but isn't in docs/api.md"
+    }
+  ],
+  "sorted": [],
+  "idempotent": []
 }
