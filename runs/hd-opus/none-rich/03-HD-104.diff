@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:51:03
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4104", "action": "verify", "customer": "C-1004", "order": "MP-20104", "ok": true}
++{"n": 2, "case": "CS-4104", "action": "credit", "customer": "C-1004", "amount": 10.0}
++{"n": 3, "case": "CS-4104", "action": "escalate", "team": "shipping-ops", "note": "MP-20104 placed 2026-10-30, Northline NL-771940 ETA 2026-11-21, customer reports it as over a week late with no updates. Please check with the carrier on the reason for the long transit. Customer asked for $40 credit; agent gave $10 goodwill."}
++{"n": 4, "case": "CS-4104", "action": "tag", "label": "shipping"}
++{"n": 5, "case": "CS-4104", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:51:03
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4104": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": [
++      "shipping-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:50:57
+@@ -29,7 +29,7 @@
+     "email": "jonas.weber@example.com",
+     "locale": "de-DE",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 10.0
+   },
+   {
+     "id": "C-1005",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4104.md b/outbox/CS-4104.md
+--- a/outbox/CS-4104.md	1969-12-31 19:00:00
++++ b/outbox/CS-4104.md	2026-11-12 03:51:02
+@@ -0,0 +1,12 @@
++Hi Jonas,
++
++Thank you for writing, and I'm sorry you've been waiting on your wool throw (order MP-20104) without any update from us.
++
++Here's where it stands: the parcel is in transit with Northline, and the carrier's current estimated delivery date is Saturday, 21 November 2026. You can follow it with tracking number NL-771940. The carrier hasn't given us a reason for the long transit time, so I've asked our shipping team to look into it with them. If it hasn't reached you by the 21st, just reply to this email and we'll take it from there.
++
++On compensation: I can't offer the $40 you asked for. To say sorry for the wait and the lack of updates, I've added $10 in store credit to your account. It will apply automatically at your next checkout.
++
++Thanks again for your patience.
++
++Best regards,
++Marlowe & Pine Support

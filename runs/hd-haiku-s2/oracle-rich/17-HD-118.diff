@@ -1,0 +1,52 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:55:29
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4118", "action": "verify", "customer": "C-1018", "order": "MP-20118", "ok": true}
++{"n": 2, "case": "CS-4118", "action": "escalate", "team": "finance-ops", "note": "Refund of 200.00 requested on MP-20118 (Dining chair pair, delivered 2026-11-02) for a snapped chair leg; exceeds the 40 USD direct-refund limit. Customer C-1018 also asked for 50 USD goodwill; capped at 15 USD by policy and credited."}
++{"n": 3, "case": "CS-4118", "action": "credit", "customer": "C-1018", "amount": 15.0}
++{"n": 4, "case": "CS-4118", "action": "tag", "label": "product"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:55:29
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4118": {
++    "status": "open",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:55:29
+@@ -141,7 +141,7 @@
+     "email": "henry.boateng@example.com",
+     "locale": "en-US",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1019",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4118.md b/outbox/CS-4118.md
+--- a/outbox/CS-4118.md	1969-12-31 19:00:00
++++ b/outbox/CS-4118.md	2026-11-12 03:55:34
+@@ -0,0 +1,12 @@
++Hi Henry,
++
++I'm sorry the dining chair pair from order MP-20118 arrived with a snapped leg, and that it cost you your weekend. That's a frustrating way to start using them, and I understand why.
++
++Your refund of $200.00 for order MP-20118 has been passed to our finance team. Refunds of this size are reviewed by them rather than issued from the support desk, so you don't need to do anything else to request it. If you have a photo of the broken leg, reply to this email with it so the review can move along.
++
++I've also added $15.00 in store credit to your account. That is the most I can offer as goodwill on a single case, so I'm not able to offer the $50.00 you asked for. The credit will apply automatically at checkout.
++
++Thank you for your patience, and for letting us know so quickly.
++
++Warmly,
++The Marlowe & Pine Crew

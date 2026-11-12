@@ -1,0 +1,38 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:53:02
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4111", "action": "verify", "customer": "C-1011", "order": "MP-20111", "ok": true}
++{"n": 2, "case": "CS-4111", "action": "escalate", "team": "finance-ops", "note": "Refund request of 150.00 on MP-20111 (Wool rug 5x8, 150.00, delivered 2026-11-05). Customer C-1011 says the rug received is a 4x6, not the 5x8 ordered. Amount exceeds the 40.00 direct-refund limit, so routed for finance review. No refund issued."}
++{"n": 3, "case": "CS-4111", "action": "tag", "label": "product"}
++{"n": 4, "case": "CS-4111", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:53:02
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4111": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4111.md b/outbox/CS-4111.md
+--- a/outbox/CS-4111.md	1969-12-31 19:00:00
++++ b/outbox/CS-4111.md	2026-11-12 03:53:01
+@@ -0,0 +1,10 @@
++Bonjour,
++
++Thank you for getting in touch about order MP-20111. We're sorry the rug you received isn't the 5x8 size you ordered. We have confirmed that the order is on your account.
++
++Because the refund of $150.00 is above the amount our support team can issue directly, I have passed your case to our finance team. They will review the refund for the order. You don't need to take any further action right now.
++
++If you would like to reorder the 5x8 rug once your refund is sorted, you're welcome to do so.
++
++Warmly,
++The Marlowe & Pine Crew

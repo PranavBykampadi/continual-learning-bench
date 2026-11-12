@@ -1,0 +1,60 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:54:33
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4117", "action": "verify", "customer": "C-1017", "order": "MP-20117", "ok": true}
++{"n": 2, "case": "CS-4117", "action": "refund", "order": "MP-20117", "amount": 30.0}
++{"n": 3, "case": "CS-4117", "action": "set-email", "customer": "C-1017", "old": "mia.schneider@example.com", "new": "mia.schneider@example.net"}
++{"n": 4, "case": "CS-4117", "action": "tag", "label": "shipping"}
++{"n": 5, "case": "CS-4117", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:54:33
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4117": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:54:31
+@@ -130,7 +130,7 @@
+   {
+     "id": "C-1017",
+     "name": "Mia Schneider",
+-    "email": "mia.schneider@example.com",
++    "email": "mia.schneider@example.net",
+     "locale": "de-DE",
+     "tier": "standard",
+     "credit_balance": 0.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/orders.json b/orders.json
+--- a/orders.json	2026-11-12 01:25:24
++++ b/orders.json	2026-11-12 03:54:31
+@@ -353,7 +353,7 @@
+     ],
+     "shipping": 0.0,
+     "total": 54.0,
+-    "refunded": 0.0,
++    "refunded": 30.0,
+     "carrier": "Northline",
+     "delivered": "2026-11-10"
+   },
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4117.md b/outbox/CS-4117.md
+--- a/outbox/CS-4117.md	1969-12-31 19:00:00
++++ b/outbox/CS-4117.md	2026-11-12 03:54:33
+@@ -0,0 +1,8 @@
++Hallo Mia,
++
++thank you for letting us know that the tea towel set ($30.00) was missing from your package for order MP-20117. We are sorry for the trouble. We have refunded $30.00 to the card on your order. Depending on your bank, it may take a few business days to appear.
++
++Your account email has also been changed to mia.schneider@example.net. Please use this address to sign in from now on.
++
++Warmly,
++The Marlowe & Pine Crew
+\ No newline at end of file

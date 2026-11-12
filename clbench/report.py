@@ -144,7 +144,7 @@ def render(run_name):
         lines.append(
             f"| {name} | {len(attempts)} | {mean(a.feedback.ci_passed for a in attempts):.2f} | {compliance:.2f} | "
             f"{hidden_compliance(attempts, hidden):.2f} | {mean(a.feedback.merged for a in attempts):.2f} | {segments} | {gain} | {closed} | "
-            f"{repeat:.2f} (n={chances}) | {cost:.3f} |"
+            f"{f'{repeat:.2f}' if chances else 'n/a'} (n={chances}) | {cost:.3f} |"
         )
     lines += ["", "Hidden rules, which a stateless frontier model follows less than half the time: "
               + (", ".join(f"`{r}`" for r in sorted(hidden)) or "none") + "."]
@@ -153,7 +153,7 @@ def render(run_name):
     for name, attempts in arms.items():
         lines.append(f"| {name} | " + " | ".join(f"{v:.2f}" for v in compliance_by_exposure(attempts)) + " |")
     first = next(iter(PACK["snapshots"]))
-    changed = [c.id for c in load_conventions().values() if first not in c.snapshots and not c.hidden]
+    changed = [c.id for c in load_conventions().values() if first not in c.snapshots]
     lines += ["", "## Rules introduced by a mid-stream change", "",
               "| arm | " + " | ".join(f"`{r}` in order (1 = followed)" for r in changed) + " |",
               "|---|" + "---|" * len(changed)]

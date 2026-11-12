@@ -1,0 +1,49 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:00:26
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4115", "action": "verify", "customer": "C-1015", "order": "MP-20115", "ok": true}
++{"n": 2, "case": "CS-4115", "action": "escalate", "team": "finance-ops", "note": "Damaged item: Soy candle set on MP-20115 (delivered) arrived melted into a block. Requests refund of $45 (full item price, 0 refunded). Over $40 direct-refund limit, not refunded directly. Email change to olivia.grant@example.net handled separately on this case."}
++{"n": 3, "case": "CS-4115", "action": "set-email", "customer": "C-1015", "old": "olivia.grant@example.com", "new": "olivia.grant@example.net"}
++{"n": 4, "case": "CS-4115", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4115", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:00:26
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4115": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:00:21
+@@ -114,7 +114,7 @@
+   {
+     "id": "C-1015",
+     "name": "Olivia Grant",
+-    "email": "olivia.grant@example.com",
++    "email": "olivia.grant@example.net",
+     "locale": "en-US",
+     "tier": "standard",
+     "credit_balance": 0.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4115.md b/outbox/CS-4115.md
+--- a/outbox/CS-4115.md	1969-12-31 19:00:00
++++ b/outbox/CS-4115.md	2026-11-12 04:00:25
+@@ -0,0 +1,8 @@
++Hi Olivia,
++
++Thanks for getting in touch, and I'm sorry the Soy candle set from order MP-20115 arrived melted. I've passed your request for a refund of the $45 you paid for the candle set to our finance team for review. They'll follow up with next steps, including what to do with the candles you received. If you're able to, feel free to reply with a photo of the set.
++
++I've also updated your account email to olivia.grant@example.net. Sign-in and order updates, including the finance team's follow-up, will now go to that address. If you didn't request this change, please reply right away so we can secure your account.
++
++Warmly,
++The Marlowe & Pine Crew

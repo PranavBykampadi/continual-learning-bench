@@ -1,0 +1,39 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:56:41
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20114", "ok": true}
++{"n": 2, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20214", "ok": true}
++{"n": 3, "case": "CS-4114", "action": "escalate", "team": "finance-ops", "note": "Refund request $70.00 for Linen blanket (qty 1) on MP-20114. Order total $70.00, already refunded $0.00. Reason: customer reports wrong colour received. Delivered 2026-11-08 via Northline; no return initiated yet. Exceeds $40 direct-refund limit. No credit issued on this case. Customer also asked about MP-20214 (in transit, Northline NL-551678) - answered, no date promised."}
++{"n": 4, "case": "CS-4114", "action": "tag", "label": "shipping"}
++{"n": 5, "case": "CS-4114", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:56:41
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4114": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4114.md b/outbox/CS-4114.md
+--- a/outbox/CS-4114.md	1969-12-31 19:00:00
++++ b/outbox/CS-4114.md	2026-11-12 03:56:45
+@@ -0,0 +1,10 @@
++Hola Diego,
++
++I'm sorry the Linen blanket from order MP-20114 arrived in the wrong colour. I've sent your refund request to our billing team. They'll review it and contact you, including about any return. Until then, please keep the blanket and its packaging.
++(Lamento que la manta de lino del pedido MP-20114 haya llegado en el color equivocado. Envié tu solicitud de reembolso a nuestro equipo de facturación. Ellos la revisarán y se pondrán en contacto contigo, incluso sobre cualquier devolución. Mientras tanto, por favor conserva la manta y su empaque.)
++
++Your pillow covers (order MP-20214) are on their way with Northline, tracking number NL-551678. I'm afraid I can't promise that they'll arrive tomorrow, or on any specific date. The Northline tracking page will show the most up-to-date delivery information.
++(Tus fundas de almohada (pedido MP-20214) están en camino con Northline, número de rastreo NL-551678. Lamentablemente no puedo prometer que lleguen mañana ni en una fecha específica. La página de rastreo de Northline mostrará la información de entrega más actualizada.)
++
++Warmly,
++The Marlowe & Pine Crew

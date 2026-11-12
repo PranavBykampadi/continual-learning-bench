@@ -1,0 +1,35 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:50:14
+@@ -0,0 +1,3 @@
++{"n": 1, "case": "CS-4102", "action": "verify", "customer": "C-1002", "order": "MP-20102", "ok": true}
++{"n": 2, "case": "CS-4102", "action": "tag", "label": "shipping"}
++{"n": 3, "case": "CS-4102", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:50:14
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4102": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4102.md b/outbox/CS-4102.md
+--- a/outbox/CS-4102.md	1969-12-31 19:00:00
++++ b/outbox/CS-4102.md	2026-11-12 03:50:13
+@@ -0,0 +1,10 @@
++Bonjour Camille,
++
++Thanks for getting in touch about order MP-20102 (linen duvet cover). The order is on its way with our carrier, Northline, and it is currently in transit.
++
++I'm not able to give you an exact delivery day, but you can follow the latest progress on your order with this tracking number: NL-884201. The carrier's tracking page shows the most up-to-date delivery information.
++
++If anything about the order changes or you need further help, just reply to this email and we'll be glad to look into it.
++
++Warmly,
++The Marlowe & Pine Crew

@@ -1,0 +1,38 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:56:49
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20114", "ok": true}
++{"n": 2, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20214", "ok": true}
++{"n": 3, "case": "CS-4114", "action": "tag", "label": "product"}
++{"n": 4, "case": "CS-4114", "action": "escalate", "team": "finance-ops", "note": "Customer: C-1014 (Diego Morales). Order: MP-20114 (Linen blanket, qty 1, total 70.00, shipping 0.00). Verification: ok (verify CS-4114 C-1014 MP-20114 returned identity confirmed). Claim: customer reports blanket received in wrong colour; requests refund of 70.00. Colour ordered is not recorded in order data; needs checking against the pick/packing record. Limit check: 70.00 is over the 40.00 limit, so no refund was run and the decision is with finance-ops. Order status: delivered 2026-11-08. Carrier: Northline. Tracking number: none on file for MP-20114. No refund has been issued (MP-20114 refunded = 0.00). Related order MP-20214 (pillow covers, in transit, tracking NL-551678, carrier ETA 2026-11-16) is not part of this claim."}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:56:49
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4114": {
++    "status": "open",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4114.md b/outbox/CS-4114.md
+--- a/outbox/CS-4114.md	1969-12-31 19:00:00
++++ b/outbox/CS-4114.md	2026-11-12 03:56:58
+@@ -0,0 +1,10 @@
++Hi Diego,
++
++Thank you for getting in touch, and I'm sorry the linen blanket from order MP-20114 arrived in the wrong colour.
++
++Blanket (MP-20114): I've passed your request for a $70.00 refund to the team that decides refunds of this amount. They will contact you. I can't give you a decision date or the outcome right now, and I haven't issued the refund myself. The order was delivered on 8 November 2026 by Northline. We don't have a tracking number on file for this order.
++
++Pillow covers (MP-20214): Your order is with Northline and is on its way. Their current estimated delivery date is 16 November 2026. This is the carrier's estimate, not a guaranteed date, so it may not arrive tomorrow. The tracking number is NL-551678, which you can use to follow the shipment with Northline.
++
++Thanks,
++Marlowe & Pine Support

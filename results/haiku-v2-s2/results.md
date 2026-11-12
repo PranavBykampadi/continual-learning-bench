@@ -34,18 +34,18 @@ Hidden rules, which a stateless frontier model follows less than half the time: 
 
 ## Rules introduced by a mid-stream change
 
-| arm | `events` in order (1 = followed) | `changelog2` in order (1 = followed) | `docs_api` in order (1 = followed) |
-|---|---|---|---|
-| history-rich | 0111111111111111 | 01111111 | 011111111111 |
-| memdir-rich | 0111111111111111 | 01111111 | 011111111111 |
-| none-rich | 0000000000000000 | 00000000 | 110100000000 |
-| none-rich+org | 1000000000000010 | 00000100 | 010000010000 |
-| none-rich+org-directed | 1111111111111111 | 01011111 | 011110111101 |
-| notes-lenient | 0110011111110001 | 00111111 | 111111111111 |
-| notes-rich | 0111111101111101 | 01111111 | 111111101111 |
-| notes-rich+org-directed | 1111111011111111 | 01110111 | 111111011011 |
-| notes-sparse | 0000000000000000 | 01100000 | 110001110000 |
-| oracle-rich | 1111111111111111 | 11111111 | 111111111111 |
-| placebo-rich | 0000001010000000 | 00000000 | 100000000000 |
+| arm | `events` in order (1 = followed) | `changelog2` in order (1 = followed) | `sorted` in order (1 = followed) | `idempotent` in order (1 = followed) | `settings` in order (1 = followed) | `docs_api` in order (1 = followed) |
+|---|---|---|---|---|---|---|
+| history-rich | 0111111111111111 | 01111111 | 011111 | 011111 | 011111 | 011111111111 |
+| memdir-rich | 0111111111111111 | 01111111 | 011111 | 011111 | 011111 | 011111111111 |
+| none-rich | 0000000000000000 | 00000000 | 000000 | 110010 | 000000 | 110100000000 |
+| none-rich+org | 1000000000000010 | 00000100 | 000000 | 110010 | 000010 | 010000010000 |
+| none-rich+org-directed | 1111111111111111 | 01011111 | 000000 | 000000 | 101011 | 011110111101 |
+| notes-lenient | 0110011111110001 | 00111111 | 000011 | 011011 | 000011 | 111111111111 |
+| notes-rich | 0111111101111101 | 01111111 | 011110 | 101111 | 010011 | 111111101111 |
+| notes-rich+org-directed | 1111111011111111 | 01110111 | 010110 | 011111 | 111101 | 111111011011 |
+| notes-sparse | 0000000000000000 | 01100000 | 000000 | 110010 | 000000 | 110001110000 |
+| oracle-rich | 1111111111111111 | 11111111 | 111111 | 111111 | 111111 | 111111111111 |
+| placebo-rich | 0000001010000000 | 00000000 | 000000 | 010010 | 000000 | 100000000000 |
 
 ![learning curve](curve.svg)

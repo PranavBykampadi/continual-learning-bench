@@ -1,0 +1,48 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:52:13
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4104", "action": "verify", "customer": "C-1004", "order": "MP-20104", "ok": true}
++{"n": 2, "case": "CS-4104", "action": "credit", "customer": "C-1004", "amount": 40.0}
++{"n": 3, "case": "CS-4104", "action": "tag", "label": "shipping"}
++{"n": 4, "case": "CS-4104", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:52:13
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4104": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:52:09
+@@ -29,7 +29,7 @@
+     "email": "jonas.weber@example.com",
+     "locale": "de-DE",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 40.0
+   },
+   {
+     "id": "C-1005",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4104.md b/outbox/CS-4104.md
+--- a/outbox/CS-4104.md	1969-12-31 19:00:00
++++ b/outbox/CS-4104.md	2026-11-12 03:52:13
+@@ -0,0 +1,10 @@
++Hallo Jonas,
++
++I'm sorry your wool throw (order MP-20104) is running late, and that nobody reached out to explain. That isn't the experience we want you to have.
++
++I've added $40 in store credit to your account for the wait. It will apply automatically at your next checkout.
++
++Your order has shipped and is in transit with Northline under tracking number NL-771940. The carrier's tracking has the latest delivery information.
++
++Warmly,
++The Marlowe & Pine Crew

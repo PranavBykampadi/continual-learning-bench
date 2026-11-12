@@ -1,0 +1,44 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:56:55
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4110", "action": "verify", "customer": "C-1010", "order": "MP-20110", "ok": true}
++{"n": 2, "case": "CS-4110", "action": "refund", "order": "MP-20110", "amount": 55.0}
++{"n": 3, "case": "CS-4110", "action": "tag", "label": "product"}
++{"n": 4, "case": "CS-4110", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:56:55
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4110": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/orders.json b/orders.json
+--- a/orders.json	2026-11-12 01:25:24
++++ b/orders.json	2026-11-12 03:56:49
+@@ -201,7 +201,7 @@
+     ],
+     "shipping": 0.0,
+     "total": 55.0,
+-    "refunded": 0.0,
++    "refunded": 55.0,
+     "carrier": "Northline",
+     "delivered": "2026-11-09"
+   },
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4110.md b/outbox/CS-4110.md
+--- a/outbox/CS-4110.md	1969-12-31 19:00:00
++++ b/outbox/CS-4110.md	2026-11-12 03:56:52
+@@ -0,0 +1,6 @@
++Hi Hana,
++
++I'm so sorry the mugs in your stoneware mug set (order MP-20110) arrived chipped. Thank you for letting us know. I've refunded $55.00 to your original payment method. You should see it in your account in 5-7 business days. There's no need to send the mugs back.
++
++Warmly,
++The Marlowe & Pine Crew

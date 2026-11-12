@@ -1,0 +1,38 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:52:13
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4105", "action": "verify", "customer": "C-1005", "order": "MP-20105", "ok": true}
++{"n": 2, "case": "CS-4105", "action": "escalate", "team": "billing-review", "note": "Refund request 95.00 for Jute rug on MP-20105, wrong pattern sent. Over 75 limit."}
++{"n": 3, "case": "CS-4105", "action": "tag", "label": "billing"}
++{"n": 4, "case": "CS-4105", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:52:13
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4105": {
++    "status": "closed",
++    "tags": [
++      "billing"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4105.md b/outbox/CS-4105.md
+--- a/outbox/CS-4105.md	1969-12-31 19:00:00
++++ b/outbox/CS-4105.md	2026-11-12 03:52:12
+@@ -0,0 +1,10 @@
++Hola Lucia,
++
++Lamentamos mucho que la alfombra de yute de tu pedido MP-20105 haya llegado con un diseño distinto al que pediste. Entendemos lo frustrante que es.
++
++Hemos enviado tu solicitud de reembolso por la alfombra a nuestro equipo de facturación, que la revisará y se pondrá en contacto contigo directamente.
++
++Gracias por tu paciencia.
++
++Warmly,
++The Marlowe & Pine Crew

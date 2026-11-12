@@ -1,0 +1,41 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:59:23
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20114", "ok": true}
++{"n": 2, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20214", "ok": true}
++{"n": 3, "case": "CS-4114", "action": "escalate", "team": "finance-ops", "note": "Refund request over desk limit ($40): MP-20114, 1 x Linen blanket, $70.00 (total $70.00, shipping $0.00), qty 1, refunded to date $0.00. Customer reports wrong colour. Delivered 2026-11-08. Requested refund: $70.00. Refund NOT run by desk. Customer did not ask for credit. Sender diego.morales@example.com matches account email. Verified (identity confirmed). Separate question: MP-20214 pillow covers in transit (tracking NL-551678, Northline); customer asked if it arrives tomorrow; answered with tracking/carrier only, no dates."}
++{"n": 4, "case": "CS-4114", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4114", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:59:23
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4114": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4114.md b/outbox/CS-4114.md
+--- a/outbox/CS-4114.md	1969-12-31 19:00:00
++++ b/outbox/CS-4114.md	2026-11-12 03:59:21
+@@ -0,0 +1,12 @@
++Hola
++
++Hi Diego,
++
++Thank you for getting in touch, and I'm sorry the linen blanket from order MP-20114 arrived in the wrong colour.
++
++Refunds over our desk limit are approved by our finance team, so I can't confirm the $70.00 refund amount or its timing myself. I have passed your request to them with the details of your order, so they can review it.
++
++About your pillow covers on order MP-20214: they are on their way with our carrier, Northline (tracking number NL-551678). Northline has the latest delivery information, so please check the tracking number on their website for the current status. I'm not able to give you a delivery day.
++
++Warmly,
++The Marlowe & Pine Crew

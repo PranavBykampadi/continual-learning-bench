@@ -1,0 +1,37 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:50:59
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4104", "action": "verify", "customer": "C-1004", "order": "MP-20104", "ok": true}
++{"n": 2, "case": "CS-4104", "action": "tag", "label": "shipping"}
++{"n": 3, "case": "CS-4104", "action": "tag", "label": "delay-inquiry"}
++{"n": 4, "case": "CS-4104", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:50:59
+@@ -1 +1,10 @@
+-{}
++{
++  "CS-4104": {
++    "status": "closed",
++    "tags": [
++      "shipping",
++      "delay-inquiry"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4104.md b/outbox/CS-4104.md
+--- a/outbox/CS-4104.md	1969-12-31 19:00:00
++++ b/outbox/CS-4104.md	2026-11-12 03:50:57
+@@ -0,0 +1,10 @@
++Hi Jonas,
++
++Thank you for getting in touch, and I'm sorry for the uncertainty about your wool throw on order MP-20104.
++
++I've checked the order. It was placed on October 30 and is currently in transit with our carrier, Northline, under tracking number NL-771940. The carrier's current estimated delivery date is November 21, 2026. That's the date I can confirm from our records. I can't see a delay on the carrier's side yet, so I'm not able to approve a $40 credit for the wait at this time. If you've been given a different date, or the throw hasn't arrived by November 21, reply to this email with the details and we'll look into it again.
++
++You can follow the parcel at any time with tracking number NL-771940 on the Northline website.
++
++Best regards,
++Marlowe & Pine Support

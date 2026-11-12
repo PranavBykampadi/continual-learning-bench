@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:54:51
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4118", "action": "verify", "customer": "C-1018", "order": "MP-20118", "ok": true}
++{"n": 2, "case": "CS-4118", "action": "escalate", "team": "finance-ops", "note": "Customer Henry Boateng (C-1018) reports a snapped leg on one of the dining chairs from order MP-20118 (Dining chair pair, $200.00 paid, delivered 2026-11-02, no prior refunds). Customer requests a $200.00 refund. Refund exceeds $40 so it is handed to finance-ops rather than issued directly. Customer also asked for $50 goodwill; capped at $15 per handbook, which has been applied."}
++{"n": 3, "case": "CS-4118", "action": "credit", "customer": "C-1018", "amount": 15.0}
++{"n": 4, "case": "CS-4118", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4118", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:54:51
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4118": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:54:51
+@@ -141,7 +141,7 @@
+     "email": "henry.boateng@example.com",
+     "locale": "en-US",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1019",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4118.md b/outbox/CS-4118.md
+--- a/outbox/CS-4118.md	1969-12-31 19:00:00
++++ b/outbox/CS-4118.md	2026-11-12 03:54:55
+@@ -0,0 +1,12 @@
++Hi Henry,
++
++I'm sorry the dining chair pair from order MP-20118 arrived with a snapped leg, and I understand how much that disrupted your weekend.
++
++Refund: Your $200.00 refund for order MP-20118 has been passed to our finance team, who handle refunds of this size. I'm not able to issue it directly from here, so I can't give you a final timing, but it will be processed back to the card used for the order.
++
++Credit: I've added $15.00 in store credit to your account as a goodwill gesture. It will apply automatically at checkout. I'm not able to offer more than $15.00 in goodwill credit on a single case, so I couldn't provide the $50.00 you asked for.
++
++Thank you for letting us know about the damage, and I'm sorry again for the trouble.
++
++Warmly,
++The Marlowe & Pine Crew

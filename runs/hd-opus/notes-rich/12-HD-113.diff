@@ -1,0 +1,58 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:56:11
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4113", "action": "verify", "customer": "C-1013", "order": "MP-20113", "ok": true}
++{"n": 2, "case": "CS-4113", "action": "credit", "customer": "C-1013", "amount": 15.0}
++{"n": 3, "case": "CS-4113", "action": "tag", "label": "shipping"}
++{"n": 4, "case": "CS-4113", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:56:11
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4113": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:56:03
+@@ -101,7 +101,7 @@
+     "email": "ana.lima@example.com",
+     "locale": "pt-BR",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1014",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4113.md b/outbox/CS-4113.md
+--- a/outbox/CS-4113.md	1969-12-31 19:00:00
++++ b/outbox/CS-4113.md	2026-11-12 03:56:09
+@@ -0,0 +1,20 @@
++Olá Ana,
++
++I'm sorry your rattan basket (order MP-20113) hasn't reached you yet. I know how frustrating it is to keep waiting for something you're looking forward to.
++
++(Sinto muito que a sua cesta de rattan (pedido MP-20113) ainda não tenha chegado. Sei como é frustrante continuar esperando por algo que você aguarda com expectativa.)
++
++Your basket is still in transit with Northline, tracking number NL-902215. I'm not able to promise an exact delivery date, but Northline's tracking page has the latest status on your parcel.
++
++(A sua cesta ainda está em trânsito com a transportadora Northline, código de rastreamento NL-902215. Não posso prometer uma data exata de entrega, mas a página de rastreamento da Northline tem o status mais atualizado da sua encomenda.)
++
++To make up for the wait, I've added $15 in store credit to your account. That's the most I can offer for a delay like this. The credit is ready to use now and will apply automatically at checkout.
++
++(Como pedido de desculpas pela espera, adicionei US$ 15 em crédito na loja à sua conta. Esse é o valor máximo que posso oferecer por um atraso como este. O crédito já está disponível e será aplicado automaticamente na finalização da compra.)
++
++Thank you for your patience.
++
++(Obrigado pela sua paciência.)
++
++Warmly,
++The Marlowe & Pine Crew

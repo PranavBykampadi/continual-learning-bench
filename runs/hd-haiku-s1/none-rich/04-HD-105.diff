@@ -1,0 +1,36 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:51:17
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4105", "action": "verify", "customer": "C-1005", "order": "MP-20105", "ok": true}
++{"n": 2, "case": "CS-4105", "action": "escalate", "team": "billing-review", "note": "refund 95.00 on MP-20105 (Jute rug), wrong pattern received; customer requests refund of rug price"}
++{"n": 3, "case": "CS-4105", "action": "tag", "label": "billing"}
++{"n": 4, "case": "CS-4105", "action": "tag", "label": "wrong-item"}
++{"n": 5, "case": "CS-4105", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:51:17
+@@ -1 +1,12 @@
+-{}
++{
++  "CS-4105": {
++    "status": "closed",
++    "tags": [
++      "billing",
++      "wrong-item"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4105.md b/outbox/CS-4105.md
+--- a/outbox/CS-4105.md	1969-12-31 19:00:00
++++ b/outbox/CS-4105.md	2026-11-12 03:51:17
+@@ -0,0 +1,6 @@
++Hi Lucía,
++
++I'm sorry the rug that arrived on order MP-20105 isn't the pattern you ordered. I can see the $95 you paid for the jute rug on that order, and I've passed your refund request to our billing review team, who will handle it from here and reach out with the next steps.
++
++Thanks for your patience,
++Marlowe & Pine Support

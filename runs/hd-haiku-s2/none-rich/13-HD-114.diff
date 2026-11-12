@@ -1,0 +1,63 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:54:31
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4114", "action": "verify", "customer": "C-1014", "order": "MP-20114", "ok": true}
++{"n": 2, "case": "CS-4114", "action": "refund", "order": "MP-20114", "amount": 70.0}
++{"n": 3, "case": "CS-4114", "action": "tag", "label": "product"}
++{"n": 4, "case": "CS-4114", "action": "tag", "label": "wrong-item"}
++{"n": 5, "case": "CS-4114", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:54:31
+@@ -1 +1,10 @@
+-{}
++{
++  "CS-4114": {
++    "status": "closed",
++    "tags": [
++      "product",
++      "wrong-item"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/orders.json b/orders.json
+--- a/orders.json	2026-11-12 01:25:24
++++ b/orders.json	2026-11-12 03:54:26
+@@ -274,7 +274,7 @@
+     ],
+     "shipping": 0.0,
+     "total": 70.0,
+-    "refunded": 0.0,
++    "refunded": 70.0,
+     "carrier": "Northline",
+     "delivered": "2026-11-08"
+   },
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4114.md b/outbox/CS-4114.md
+--- a/outbox/CS-4114.md	1969-12-31 19:00:00
++++ b/outbox/CS-4114.md	2026-11-12 03:54:30
+@@ -0,0 +1,23 @@
++Hi Diego,
++
++I'm sorry the linen blanket from order MP-20114 arrived in the wrong colour. I've refunded $70.00 to your original payment method for that order. Refunds usually show up within 5-7 business days.
++
++About your pillow covers on MP-20214: the carrier (Northline) shows them in transit under tracking number NL-551678, with an estimated delivery date of Sunday, 16 November. They won't arrive tomorrow (13 November), but you can follow the parcel with that tracking number for the latest updates.
++
++Let us know if there's anything else we can do.
++
++Warmly,
++Marlowe & Pine Support
++
++---
++
++Hola Diego,
++
++Lamento mucho que la manta de lino del pedido MP-20114 llegara en un color equivocado. Ya reembolsé $70.00 a tu método de pago original para ese pedido. Los reembolsos suelen aparecer en 5 a 7 días hábiles.
++
++Sobre tus fundas para almohada en MP-20214: la paquetería (Northline) indica que el envío está en tránsito con el número de rastreo NL-551678, y la fecha estimada de entrega es el domingo 16 de noviembre. No llegarán mañana (13 de noviembre), pero puedes seguir el paquete con ese número de rastreo para ver las actualizaciones.
++
++Si necesitas algo más, avísanos.
++
++Saludos,
++Marlowe & Pine Support

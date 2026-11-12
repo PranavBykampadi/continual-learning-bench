@@ -1,0 +1,41 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:53:03
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4107", "action": "verify", "customer": "C-1007", "order": "MP-20107", "ok": true}
++{"n": 2, "case": "CS-4107", "action": "verify", "customer": "C-1007", "order": "MP-20207", "ok": true}
++{"n": 3, "case": "CS-4107", "action": "escalate", "team": "billing-review", "note": "Refund request $310.00 for Pine bookcase on order MP-20107 (total 310.00, refunded 0.00). Arrived with broken shelf; customer returning item. Over 75 limit."}
++{"n": 4, "case": "CS-4107", "action": "tag", "label": "billing"}
++{"n": 5, "case": "CS-4107", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:53:03
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4107": {
++    "status": "closed",
++    "tags": [
++      "billing"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4107.md b/outbox/CS-4107.md
+--- a/outbox/CS-4107.md	1969-12-31 19:00:00
++++ b/outbox/CS-4107.md	2026-11-12 03:53:02
+@@ -0,0 +1,12 @@
++Hello Priya,
++
++I'm so sorry your Pine bookcase from order MP-20107 arrived with a broken shelf. That's not the experience we want for you.
++
++Bookcase (MP-20107): I've sent your refund request to our billing team. They'll review it and contact you, including about the return.
++
++Napkins (MP-20207): Your Cotton napkins are on their way with Northline. The tracking number is NL-660312. I can't promise they'll arrive before the weekend, but Northline's tracking page has the latest status.
++
++Thank you for your patience, and let us know if you need anything else.
++
++Warmly,
++The Marlowe & Pine Crew

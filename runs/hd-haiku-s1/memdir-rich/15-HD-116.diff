@@ -1,0 +1,51 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:00:51
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4116", "action": "verify", "customer": "C-1016", "order": "MP-20116", "ok": true}
++{"n": 2, "case": "CS-4116", "action": "credit", "customer": "C-1016", "amount": 15.0}
++{"n": 3, "case": "CS-4116", "action": "escalate", "team": "shipping-ops", "note": "Customer Sam Patel (C-1016) requested a $25 delay credit and a firm delivery date on MP-20116 (bamboo shelf, Northline NL-330981, in transit, carrier ETA 2026-11-24 not yet passed). Granted $15 goodwill credit (per-case cap). Excess $10 of requested $25 escalated here. No delivery date given to customer."}
++{"n": 4, "case": "CS-4116", "action": "tag", "label": "shipping"}
++{"n": 5, "case": "CS-4116", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:00:51
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4116": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": [
++      "shipping-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:00:43
+@@ -125,7 +125,7 @@
+     "email": "sam.patel@example.com",
+     "locale": "en-US",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1017",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4116.md b/outbox/CS-4116.md
+--- a/outbox/CS-4116.md	1969-12-31 19:00:00
++++ b/outbox/CS-4116.md	2026-11-12 04:00:48
+@@ -0,0 +1,10 @@
++Hi Sam,
++
++Thanks for getting in touch about order MP-20116 (the bamboo shelf). I'm sorry it has taken longer than expected to arrive.
++
++We've applied a $15.00 credit to your Marlowe & Pine account as a goodwill gesture for the delay. The credit is already on your account.
++
++Your order is with our carrier, Northline (tracking number NL-330981). Northline has the latest delivery information, so please check that tracking number on their website for the current status. I've also passed your request for a firm delivery date and the rest of your compensation request to our shipping team for review.
++
++Warmly,
++The Marlowe & Pine Crew

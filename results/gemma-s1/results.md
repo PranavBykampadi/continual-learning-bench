@@ -18,10 +18,10 @@ Hidden rules, which a stateless frontier model follows less than half the time: 
 
 ## Rules introduced by a mid-stream change
 
-| arm | `events` in order (1 = followed) | `changelog2` in order (1 = followed) | `docs_api` in order (1 = followed) |
-|---|---|---|---|
-| none-rich | 0000000000000000 | 00000000 | 000000000000 |
-| notes-rich | 0111111111111111 | 01100111 | 011001010000 |
-| oracle-rich | 1111111111111101 | 11111111 | 001000000001 |
+| arm | `events` in order (1 = followed) | `changelog2` in order (1 = followed) | `sorted` in order (1 = followed) | `idempotent` in order (1 = followed) | `settings` in order (1 = followed) | `docs_api` in order (1 = followed) |
+|---|---|---|---|---|---|---|
+| none-rich | 0000000000000000 | 00000000 | 000000 | 110010 | 000000 | 000000000000 |
+| notes-rich | 0111111111111111 | 01100111 | 010111 | 011111 | 010111 | 011001010000 |
+| oracle-rich | 1111111111111101 | 11111111 | 110111 | 111111 | 111101 | 001000000001 |
 
 ![learning curve](curve.svg)

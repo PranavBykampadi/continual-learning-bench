@@ -1,0 +1,55 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:57:48
+@@ -0,0 +1,6 @@
++{"n": 1, "case": "CS-4115", "action": "verify", "customer": "C-1015", "order": "MP-20115", "ok": true}
++{"n": 2, "case": "CS-4115", "action": "escalate", "team": "finance-ops", "note": "Customer ID: C-1015 (Olivia Grant). Order: MP-20115 (Soy candle set, 1 x 45.00, total 45.00, shipping 0.00). Verification: ok (verify CS-4115 C-1015 MP-20115 passed). Claim: set arrived melted into a block. Requested: refund of 45.00 to original card. Limit check: 45.00 is over the 40.00 limit, so refund was NOT run and the decision is left to finance-ops. Order status: delivered, delivered 2026-11-10. Carrier: Northline. Tracking number: none on file for this order. Pick/packing record: not in the order data, please check before deciding. Refunded to date: 0.00. No refund has been issued. Same request also changed the account email from olivia.grant@example.com to olivia.grant@example.net (set-email run on this case)."}
++{"n": 3, "case": "CS-4115", "action": "set-email", "customer": "C-1015", "old": "olivia.grant@example.com", "new": "olivia.grant@example.net"}
++{"n": 4, "case": "CS-4115", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4115", "action": "tag", "label": "account"}
++{"n": 6, "case": "CS-4115", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:57:48
+@@ -1 +1,12 @@
+-{}
++{
++  "CS-4115": {
++    "status": "closed",
++    "tags": [
++      "product",
++      "account"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 03:57:43
+@@ -114,7 +114,7 @@
+   {
+     "id": "C-1015",
+     "name": "Olivia Grant",
+-    "email": "olivia.grant@example.com",
++    "email": "olivia.grant@example.net",
+     "locale": "en-US",
+     "tier": "standard",
+     "credit_balance": 0.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4115.md b/outbox/CS-4115.md
+--- a/outbox/CS-4115.md	1969-12-31 19:00:00
++++ b/outbox/CS-4115.md	2026-11-12 03:57:46
+@@ -0,0 +1,12 @@
++Hi Olivia,
++
++I'm sorry the soy candle set from order MP-20115 arrived melted into a block. That's not the experience we want you to have.
++
++Your account email has been updated to olivia.grant@example.net. Order updates will go there from now on.
++
++Your refund request for $45.00 has been passed to the team that decides refund requests, and they will contact you. I can't tell you the outcome or when that will be yet.
++
++For your records, the order was delivered on November 10, 2026 by carrier Northline. We don't have a tracking number on file for this order.
++
++Warmly,
++The Marlowe & Pine Crew

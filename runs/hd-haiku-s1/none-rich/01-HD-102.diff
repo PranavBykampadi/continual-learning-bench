@@ -1,0 +1,39 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 03:50:16
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4102", "action": "verify", "customer": "C-1002", "order": "MP-20102", "ok": true}
++{"n": 2, "case": "CS-4102", "action": "tag", "label": "shipping"}
++{"n": 3, "case": "CS-4102", "action": "tag", "label": "eta-request"}
++{"n": 4, "case": "CS-4102", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 03:50:16
+@@ -1 +1,10 @@
+-{}
++{
++  "CS-4102": {
++    "status": "closed",
++    "tags": [
++      "shipping",
++      "eta-request"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4102.md b/outbox/CS-4102.md
+--- a/outbox/CS-4102.md	1969-12-31 19:00:00
++++ b/outbox/CS-4102.md	2026-11-12 03:50:15
+@@ -0,0 +1,12 @@
++Hello Camille,
++
++Thank you for reaching out about order MP-20102 (Linen duvet cover).
++
++Your order is in transit with our carrier, Northline. The carrier's current estimated delivery date is Thursday, November 19, 2026. Please note this is the carrier's estimate, not a guaranteed delivery time, so the parcel could arrive a day or so earlier or later.
++
++You can follow the delivery with tracking number NL-884201 on the Northline website for the latest updates.
++
++If the parcel has not arrived by Friday, November 20, 2026, please reply to this email with your order number and we will look into it with the carrier.
++
++Best regards,
++Marlowe & Pine Support
