@@ -1,0 +1,175 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:55:19
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-161] customers: volume rebate for a customer
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:55:21
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.rebate_for(customer_id)`: volume rebate as Money: 3% of paid invoices at 10+ shipments, 6% at 50+, else zero; unknown customer → E_UNKNOWN_CUSTOMER
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:55:05
+@@ -1,6 +1,10 @@
+ import uuid
++from decimal import Decimal
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +31,34 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned by a customer, as Money.
++
++    A share of the total of the customer's paid invoices, picked by how many
++    shipments the customer has (every status counts), using
++    ``settings.VOLUME_REBATE_TIERS``. Below the lowest cut-off the rebate is zero.
++    Unknown customer → DomainError E_UNKNOWN_CUSTOMER. Read-only: emits no events.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++
++    shipment_count = sum(
++        1 for s in db.shipments.values() if s.customer_id == customer_id
++    )
++    share = Decimal("0")
++    for minimum, pct in settings.VOLUME_REBATE_TIERS:
++        if shipment_count >= minimum:
++            share = pct
++            break
++
++    paid_total = Money.zero()
++    for invoice in db.invoices.values():
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None or shipment.customer_id != customer_id:
++            continue
++        if invoice.status == "paid":
++            paid_total = paid_total + Money.parse(invoice.amount)
++
++    return paid_total.scale(share)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 04:54:58
+@@ -0,0 +1,10 @@
++"""Business thresholds and rates. Finance changes these; keep them all here."""
++from decimal import Decimal
++
++# PRC-161: volume rebate on paid invoices, by shipment count.
++# Same shipment-count cut-offs as legacy volume_tier (50 → bulk, 10 → regular).
++# Ordered highest minimum first: (minimum shipments, rebate share).
++VOLUME_REBATE_TIERS = (
++    (50, Decimal("0.06")),
++    (10, Decimal("0.03")),
++)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rebate_for.py b/tests/unit/test_rebate_for.py
+--- a/tests/unit/test_rebate_for.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rebate_for.py	2026-11-12 04:55:18
+@@ -0,0 +1,114 @@
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _customer(cid="C1"):
++    db.customers[cid] = Customer(id=cid, name=cid)
++    return cid
++
++
++def _shipments(cid, n, status="created"):
++    made = []
++    for i in range(n):
++        sid = f"{cid}_shp_{i:04d}"
++        db.shipments[sid] = Shipment(
++            id=sid, customer_id=cid, weight_kg=1.0, zone="local", status=status
++        )
++        made.append(sid)
++    return made
++
++
++def _invoice(iid, shipment_id, amount, status="paid"):
++    db.invoices[iid] = Invoice(id=iid, shipment_id=shipment_id, amount=amount, status=status)
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for("nope")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert events.OUTBOX == []
++
++
++def test_no_shipments_no_invoices_is_zero():
++    cid = _customer()
++    assert customers.rebate_for(cid) == Money.zero()
++
++
++@pytest.mark.parametrize(
++    "count, expected",
++    [
++        (0, "0.00"),
++        (9, "0.00"),
++        (10, "30.00"),
++        (49, "30.00"),
++        (50, "60.00"),
++        (75, "60.00"),
++    ],
++)
++def test_tier_boundaries(count, expected):
++    cid = _customer()
++    sids = _shipments(cid, count)
++    if sids:
++        _invoice("I1", sids[0], 1000.0)
++    else:
++        db.shipments["lone"] = Shipment(id="lone", customer_id="OTHER", weight_kg=1, zone="local")
++    assert customers.rebate_for(cid) == Money.parse(expected)
++
++
++def test_only_paid_invoices_count():
++    cid = _customer()
++    sids = _shipments(cid, 10)
++    _invoice("I1", sids[0], 100.0, "paid")
++    _invoice("I2", sids[1], 200.0, "paid")
++    _invoice("I3", sids[2], 5000.0, "open")
++    _invoice("I4", sids[3], 7000.0, "void")
++    assert customers.rebate_for(cid) == Money.parse("9.00")
++
++
++def test_other_customers_invoices_and_shipments_ignored():
++    a = _customer("C1")
++    b = _customer("C2")
++    a_sids = _shipments(a, 10)
++    b_sids = _shipments(b, 50)
++    _invoice("I1", a_sids[0], 100.0)
++    _invoice("I2", b_sids[0], 1000.0)
++    assert customers.rebate_for(a) == Money.parse("3.00")
++    assert customers.rebate_for(b) == Money.parse("60.00")
++
++
++def test_cancelled_shipments_still_count_toward_tier():
++    cid = _customer()
++    sids = _shipments(cid, 10, status="cancell

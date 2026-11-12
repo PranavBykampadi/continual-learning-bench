@@ -1,0 +1,132 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:39:51
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: add heavy_quote with 0.75/kg surcharge above 30 kg (PRC-156)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:39:53
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: normal quote plus 0.75 per kg above 30 kg; raises `E_BAD_ZONE` / `E_BAD_WEIGHT` (read-only)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:39:50
+@@ -1,3 +1,8 @@
++from math import isfinite
++
++from parcelo.errors import DomainError
++from parcelo.settings import HEAVY_SURCHARGE_PER_KG, HEAVY_THRESHOLD_KG
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +17,18 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus a per-kg surcharge for weight above the heavy threshold."""
++    if not isinstance(zone, str) or zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", repr(zone))
++    if (
++        isinstance(weight_kg, bool)
++        or not isinstance(weight_kg, (int, float))
++        or not isfinite(weight_kg)
++        or weight_kg <= 0
++    ):
++        raise DomainError("E_BAD_WEIGHT", repr(weight_kg))
++    excess = max(0, weight_kg - HEAVY_THRESHOLD_KG)
++    return round(quote(weight_kg, zone) + HEAVY_SURCHARGE_PER_KG * excess, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 04:39:45
+@@ -0,0 +1,5 @@
++"""Business constants. Finance edits these; import them, never redefine them."""
++
++# Heavy-parcel surcharge (PRC-156)
++HEAVY_THRESHOLD_KG = 30
++HEAVY_SURCHARGE_PER_KG = 0.75
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_heavy_quote.py b/tests/unit/test_heavy_quote.py
+--- a/tests/unit/test_heavy_quote.py	1969-12-31 19:00:00
++++ b/tests/unit/test_heavy_quote.py	2026-11-12 04:40:06
+@@ -0,0 +1,69 @@
++import copy
++
++import pytest
++
++from parcelo import events, rates
++from parcelo.errors import DomainError
++from parcelo.settings import HEAVY_SURCHARGE_PER_KG, HEAVY_THRESHOLD_KG
++from parcelo.store import db
++
++
++def _snapshot():
++    return copy.deepcopy(dict(vars(db)))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        rates.heavy_quote(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_constants_come_from_settings():
++    assert HEAVY_THRESHOLD_KG == 30
++    assert HEAVY_SURCHARGE_PER_KG == 0.75
++
++
++@pytest.mark.parametrize("weight", [0.5, 1, 10, 29.99, 30, 30.0])
++@pytest.mark.parametrize("zone", ["local", "national", "international"])
++def test_at_or_below_threshold_is_normal_quote(weight, zone):
++    assert rates.heavy_quote(weight, zone) == rates.quote(weight, zone)
++
++
++@pytest.mark.parametrize(
++    "weight,zone,expected",
++    [
++        (31, "local", 44.0),  # 4.5 + 38.75 + 0.75
++        (40, "national", 66.5),  # 9.0 + 50.0 + 7.5
++        (32, "international", 65.5),  # 24.0 + 40.0 + 1.5
++        (30.4, "local", 42.8),  # 4.5 + 38.0 + 0.3
++        (100, "local", 182.0),  # 4.5 + 125 + 52.5
++    ],
++)
++def test_above_threshold_adds_surcharge(weight, zone, expected):
++    assert rates.heavy_quote(weight, zone) == expected
++
++
++def test_no_events_and_no_state_change():
++    before = _snapshot()
++    rates.heavy_quote(45, "national")
++    assert events.OUTBOX == []
++    assert _snapshot() == before
++
++
++@pytest.mark.parametrize(
++    "zone",
++    ["moon", "", " ", "Local", "LOCAL", " local", "local ", None, 1, True, ["local"]],
++)
++def test_bad_zone(zone):
++    _assert_rejected("E_BAD_ZONE", 31, zone)
++
++
++@pytest.mark.parametrize(
++    "weight",
++    [0, -1, -0.5, float("nan"), float("inf"), float("-inf"), None, "31", "", True, False, [31]],
++)
++def test_bad_weight(weight):
++    _assert_rejected("E_BAD_WEIGHT", weight, "local")

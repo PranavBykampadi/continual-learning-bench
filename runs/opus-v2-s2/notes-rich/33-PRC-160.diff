@@ -1,0 +1,152 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:43:58
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: mark a shipment returned (PRC-160)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:44:00
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_returned(shipment_id)`: mark a shipment returned and set `returned_at`; returns `Shipment`; (idempotent) already-returned shipments come back unchanged with no event; emits `shipment.returned`; errors `E_BAD_INPUT`, `E_UNKNOWN_SHIPMENT`, `E_BAD_STATE` (status "created")
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 04:43:52
+@@ -1,6 +1,7 @@
+ CODES = {
+     "E_NOT_FOUND",
+     "E_UNKNOWN_CUSTOMER",
++    "E_UNKNOWN_SHIPMENT",
+     "E_BAD_ZONE",
+     "E_BAD_WEIGHT",
+     "E_BAD_STATE",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:43:51
+@@ -19,6 +19,7 @@
+     status: str = "created"
+     created_at: object = None
+     delivered_at: object = None
++    returned_at: object = None
+     notes: list = field(default_factory=list)
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 04:43:56
+@@ -4,7 +4,10 @@
+ from parcelo.rates import ZONE_BASE
+ from parcelo.store import db
+ 
++STATUS_CREATED = "created"
++STATUS_RETURNED = "returned"
+ 
++
+ def create_shipment(customer_id, weight_kg, zone):
+     if customer_id not in db.customers:
+         raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
+@@ -28,3 +31,19 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_returned(shipment_id):
++    if not isinstance(shipment_id, str) or not shipment_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(shipment_id))
++    shipment = db.shipments.get(shipment_id)
++    if shipment is None:
++        raise DomainError("E_UNKNOWN_SHIPMENT", shipment_id)
++    if shipment.status == STATUS_RETURNED:
++        return shipment
++    if shipment.status == STATUS_CREATED:
++        raise DomainError("E_BAD_STATE", shipment.status)
++    shipment.status = STATUS_RETURNED
++    shipment.returned_at = clock.now()
++    events.emit("shipment.returned", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_returned.py b/tests/unit/test_mark_returned.py
+--- a/tests/unit/test_mark_returned.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_returned.py	2026-11-12 04:44:06
+@@ -0,0 +1,70 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, shipments
++from parcelo.errors import CODES, DomainError
++
++T1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
++T2 = datetime(2026, 1, 2, tzinfo=timezone.utc)
++
++
++def _delivered_shipment():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 1.5, "national")
++    s.status = "delivered"
++    return s
++
++
++def test_marks_returned_sets_time_and_emits():
++    s = _delivered_shipment()
++    clock.set_fixed(T1)
++    out = shipments.mark_returned(s.id)
++    assert out is s
++    assert s.status == "returned"
++    assert s.returned_at == T1
++    assert events.OUTBOX[-1]["name"] == "shipment.returned"
++    assert events.OUTBOX[-1]["entity_id"] == s.id
++
++
++def test_already_returned_is_unchanged_without_event():
++    s = _delivered_shipment()
++    clock.set_fixed(T1)
++    shipments.mark_returned(s.id)
++    n = len(events.OUTBOX)
++    clock.set_fixed(T2)
++    out = shipments.mark_returned(s.id)
++    assert out is s
++    assert s.returned_at == T1
++    assert len(events.OUTBOX) == n
++
++
++def test_created_shipment_is_bad_state():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 1.5, "national")
++    n = len(events.OUTBOX)
++    with pytest.raises(DomainError) as err:
++        shipments.mark_returned(s.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert err.value.message == "created"
++    assert s.status == "created"
++    assert s.returned_at is None
++    assert len(events.OUTBOX) == n
++
++
++def test_unknown_shipment():
++    with pytest.raises(DomainError) as err:
++        shipments.mark_returned("shp_missing")
++    assert err.value.code == "E_UNKNOWN_SHIPMENT"
++
++
++@pytest.mark.parametrize("bad", [None, "", "   ", 42])
++def test_bad_input(bad):
++    with pytest.raises(DomainError) as err:
++        shipments.mark_returned(bad)
++    assert err.value.code == "E_BAD_INPUT"
++    assert err.value.message == repr(bad)
++
++
++def test_error_codes_registered():
++    assert {"E_BAD_INPUT", "E_UNKNOWN_SHIPMENT", "E_BAD_STATE"} <= CODES

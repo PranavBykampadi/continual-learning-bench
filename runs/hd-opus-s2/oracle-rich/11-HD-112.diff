@@ -1,0 +1,46 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:14:13
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4112", "action": "verify", "customer": "C-1012", "order": "MP-20112", "ok": true}
++{"n": 2, "case": "CS-4112", "action": "set-email", "customer": "C-1012", "old": "katrin.vogel@example.com", "new": "katrin.vogel@example.net"}
++{"n": 3, "case": "CS-4112", "action": "tag", "label": "account"}
++{"n": 4, "case": "CS-4112", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:14:13
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4112": {
++    "status": "closed",
++    "tags": [
++      "account"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:14:08
+@@ -90,7 +90,7 @@
+   {
+     "id": "C-1012",
+     "name": "Katrin Vogel",
+-    "email": "katrin.vogel@example.com",
++    "email": "katrin.vogel@example.net",
+     "locale": "de-DE",
+     "tier": "standard",
+     "credit_balance": 0.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4112.md b/outbox/CS-4112.md
+--- a/outbox/CS-4112.md	1969-12-31 19:00:00
++++ b/outbox/CS-4112.md	2026-11-12 04:14:12
+@@ -0,0 +1,8 @@
++Hallo Katrin,
++
++Thanks for getting in touch. We've confirmed your account using order MP-20112, and your account email is now katrin.vogel@example.net. From now on, order updates and account messages will go to that address.
++
++If you didn't ask for this change, or if anything looks wrong, just reply to this message and we'll sort it out.
++
++Warmly,
++The Marlowe & Pine Crew

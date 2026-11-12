@@ -1,0 +1,20 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 04:21:29
+@@ -32,3 +32,16 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise ValueError("invoice is not open")
++    if amount > invoice.amount:
++        raise ValueError("credit amount exceeds invoice amount")
++    
++    invoice.amount -= amount
++    return invoice.amount

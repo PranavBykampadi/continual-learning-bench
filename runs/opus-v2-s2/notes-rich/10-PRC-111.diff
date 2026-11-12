@@ -1,0 +1,127 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:20:07
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: add timestamped notes to a shipment (PRC-111)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:17:53
++++ b/parcelo/shipments.py	2026-11-12 04:20:05
+@@ -28,3 +28,14 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def add_note(shipment_id, text):
++    if shipment_id not in db.shipments:
++        raise DomainError("E_NOT_FOUND", f"shipment {shipment_id!r} does not exist")
++    if not isinstance(text, str) or not text.strip():
++        raise DomainError("E_BAD_INPUT", "note text must be a non-empty string")
++    shipment = db.shipments[shipment_id]
++    shipment.notes.append({"text": text, "at": clock.now()})
++    audit.record("shipment.note_added", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_add_note.py b/tests/unit/test_add_note.py
+--- a/tests/unit/test_add_note.py	1969-12-31 19:00:00
++++ b/tests/unit/test_add_note.py	2026-11-12 04:20:15
+@@ -0,0 +1,94 @@
++import copy
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++def _seed_shipment(shipment_id="shp_1", notes=None):
++    db.customers["cus_1"] = Customer(id="cus_1", name="Acme")
++    db.shipments[shipment_id] = Shipment(
++        id=shipment_id,
++        customer_id="cus_1",
++        weight_kg=2.0,
++        zone="local",
++        notes=list(notes or []),
++    )
++    return db.shipments[shipment_id]
++
++
++def test_add_note_appends_timestamped_note_and_audits():
++    _seed_shipment()
++    clock.set_fixed(T0)
++
++    result = shipments.add_note("shp_1", "Left at back door")
++
++    assert result is db.shipments["shp_1"]
++    assert result.notes == [{"text": "Left at back door", "at": T0}]
++    assert audit.LOG == [
++        {
++            "action": "shipment.note_added",
++            "entity_id": "shp_1",
++            "at": T0,
++            "details": {},
++        }
++    ]
++
++
++def test_add_note_keeps_existing_notes_and_stamps_each_time():
++    _seed_shipment()
++    t1 = T0 + timedelta(minutes=5)
++    clock.set_fixed(T0)
++    shipments.add_note("shp_1", "first")
++    clock.set_fixed(t1)
++    shipments.add_note("shp_1", "second")
++
++    assert db.shipments["shp_1"].notes == [
++        {"text": "first", "at": T0},
++        {"text": "second", "at": t1},
++    ]
++    assert audit.LOG == [
++        {"action": "shipment.note_added", "entity_id": "shp_1", "at": T0, "details": {}},
++        {"action": "shipment.note_added", "entity_id": "shp_1", "at": t1, "details": {}},
++    ]
++
++
++@pytest.mark.parametrize("shipment_id", ["missing", "", " ", None, "SHP_1"])
++def test_add_note_unknown_shipment_fails(shipment_id):
++    _seed_shipment()
++    before = copy.deepcopy(db.shipments)
++
++    with pytest.raises(DomainError) as err:
++        shipments.add_note(shipment_id, "hello")
++
++    assert err.value.code == "E_NOT_FOUND"
++    assert db.shipments == before
++    assert audit.LOG == []
++
++
++def test_add_note_on_empty_store_fails():
++    with pytest.raises(DomainError) as err:
++        shipments.add_note("shp_1", "hello")
++
++    assert err.value.code == "E_NOT_FOUND"
++    assert db.shipments == {}
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("text", ["", " ", "\t\n", None, 42, ["note"]])
++def test_add_note_bad_text_fails(text):
++    _seed_shipment(notes=[{"text": "existing", "at": T0}])
++    before = copy.deepcopy(db.shipments)
++
++    with pytest.raises(DomainError) as err:
++        shipments.add_note("shp_1", text)
++
++    assert err.value.code == "E_BAD_INPUT"
++    assert db.shipments == before
++    assert audit.LOG == []

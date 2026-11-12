@@ -1,0 +1,124 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:19:04
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: gold tier gets 10% off quotes via discounted_quote (PRC-110)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:19:16
+@@ -1,3 +1,8 @@
++from decimal import Decimal
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +17,26 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++TIER_DISCOUNT_PCT = {"standard": Decimal("0"), "gold": Decimal("10")}
++
++
++def discounted_quote(weight_kg, zone, tier):
++    """Regular quote for weight/zone minus the tier's percentage discount, as Money.
++
++    The discounted amount is rounded half-up to whole cents (via Money.scale).
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", f"unknown zone: {zone!r}")
++    if tier not in TIER_DISCOUNT_PCT:
++        raise DomainError("E_BAD_INPUT", f"unknown tier: {tier!r}")
++    if (
++        isinstance(weight_kg, bool)
++        or not isinstance(weight_kg, (int, float))
++        or weight_kg <= 0
++    ):
++        raise DomainError("E_BAD_WEIGHT", f"weight must be positive, got {weight_kg!r}")
++    regular = Money.parse(quote(weight_kg, zone))
++    factor = 1 - TIER_DISCOUNT_PCT[tier] / Decimal(100)
++    return regular.scale(factor)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_discounted_quote.py b/tests/unit/test_discounted_quote.py
+--- a/tests/unit/test_discounted_quote.py	1969-12-31 19:00:00
++++ b/tests/unit/test_discounted_quote.py	2026-11-12 04:19:20
+@@ -0,0 +1,70 @@
++from decimal import Decimal
++
++import pytest
++
++from parcelo import audit, rates
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++@pytest.mark.parametrize(
++    "weight_kg, zone, expected",
++    [
++        (2, "local", Money(700)),  # 4.50 + 2.50
++        (1, "national", Money(1025)),  # 9.00 + 1.25
++        (4, "international", Money(2900)),  # 24.00 + 5.00
++    ],
++)
++def test_standard_tier_has_no_discount(weight_kg, zone, expected):
++    assert rates.discounted_quote(weight_kg, zone, "standard") == expected
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize(
++    "weight_kg, zone, expected",
++    [
++        (2, "local", Money(630)),  # 7.00 * 0.9
++        (4, "international", Money(2610)),  # 29.00 * 0.9
++        (1, "national", Money(923)),  # 10.25 * 0.9 = 9.225 -> 9.23 (half up)
++        (1, "local", Money(518)),  # 5.75 * 0.9 = 5.175 -> 5.18 (half up)
++    ],
++)
++def test_gold_tier_gets_ten_percent_off(weight_kg, zone, expected):
++    assert rates.discounted_quote(weight_kg, zone, "gold") == expected
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("weight_kg", [0.01, 1, 2.5, 3])
++def test_standard_matches_regular_quote(weight_kg):
++    expected = Money.parse(rates.quote(weight_kg, "national"))
++    assert rates.discounted_quote(weight_kg, "national", "standard") == expected
++
++
++@pytest.mark.parametrize("zone", ["moon", "", "  ", None, "LOCAL"])
++def test_unknown_zone_fails(zone):
++    with pytest.raises(DomainError) as err:
++        rates.discounted_quote(1, zone, "gold")
++    assert err.value.code == "E_BAD_ZONE"
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("tier", ["platinum", "", "  ", None, "Gold"])
++def test_unknown_tier_fails(tier):
++    with pytest.raises(DomainError) as err:
++        rates.discounted_quote(1, "local", tier)
++    assert err.value.code == "E_BAD_INPUT"
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("weight_kg", [0, -1, -0.01, None, "2", True, Decimal("2")])
++def test_bad_weight_fails(weight_kg):
++    with pytest.raises(DomainError) as err:
++        rates.discounted_quote(weight_kg, "local", "gold")
++    assert err.value.code == "E_BAD_WEIGHT"
++    assert audit.LOG == []
++
++
++def test_zone_checked_before_tier():
++    with pytest.raises(DomainError) as err:
++        rates.discounted_quote(1, "moon", "platinum")
++    assert err.value.code == "E_BAD_ZONE"

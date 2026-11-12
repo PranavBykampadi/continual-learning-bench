@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:20:27
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4118", "action": "verify", "customer": "C-1018", "order": "MP-20118", "ok": true}
++{"n": 2, "case": "CS-4118", "action": "credit", "customer": "C-1018", "amount": 15.0}
++{"n": 3, "case": "CS-4118", "action": "escalate", "team": "finance-ops", "note": "Damaged item: Dining chair pair (no size listed), $200.00, qty 1 - one chair arrived with a snapped leg, pair unusable. Amount requested: $200.00 refund. Order total $200.00, shipping $0.00. Carrier Northline, delivered 2026-11-02. Prior refunds: $0.00. Credit given: $15 goodwill store credit (customer asked for $50; capped at $15). Over $40 limit."}
++{"n": 4, "case": "CS-4118", "action": "tag", "label": "billing"}
++{"n": 5, "case": "CS-4118", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:20:27
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4118": {
++    "status": "closed",
++    "tags": [
++      "billing"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:20:23
+@@ -141,7 +141,7 @@
+     "email": "henry.boateng@example.com",
+     "locale": "en-US",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1019",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4118.md b/outbox/CS-4118.md
+--- a/outbox/CS-4118.md	1969-12-31 19:00:00
++++ b/outbox/CS-4118.md	2026-11-12 04:20:27
+@@ -0,0 +1,12 @@
++Hi Henry,
++
++I'm so sorry that one of the chairs in your dining chair pair from order MP-20118 arrived with a snapped leg. That's not the experience we want for you, and I'm sorry it cost you your weekend.
++
++I've passed your refund request to our finance team. They will review it and follow up with you directly.
++
++I've also added $15 in store credit to your account for the trouble. It will apply automatically at your next checkout.
++
++Thank you for your patience, and again, I'm sorry about this.
++
++Best regards,
++Marlowe & Pine Support

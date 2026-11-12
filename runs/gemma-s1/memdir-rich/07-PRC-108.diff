@@ -1,0 +1,17 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:17:44
+@@ -22,3 +22,13 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer():
++    outstandings = {}
++    for invoice in db.invoices.values():
++        if invoice.status == "open":
++            shipment = db.shipments[invoice.shipment_id]
++            customer_id = shipment.customer_id
++            outstandings[customer_id] = outstandings.get(customer_id, 0.0) + invoice.amount
++    return outstandings

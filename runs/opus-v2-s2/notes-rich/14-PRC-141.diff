@@ -1,0 +1,180 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:24:31
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: reassign a shipment to another customer (PRC-141)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 04:24:29
+@@ -1,4 +1,4 @@
+-from parcelo import clock, events, ids
++from parcelo import audit, clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+ from parcelo.rates import ZONE_BASE
+@@ -28,3 +28,25 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def reassign_shipment(shipment_id, new_customer_id):
++    for name, value in (("shipment_id", shipment_id), ("new_customer_id", new_customer_id)):
++        if not isinstance(value, str) or not value.strip():
++            raise DomainError("E_BAD_INPUT", f"{name} must be a non-empty string, got {value!r}")
++    if shipment_id not in db.shipments:
++        raise DomainError("E_NOT_FOUND", f"shipment {shipment_id!r} does not exist")
++    if new_customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"customer {new_customer_id!r} does not exist")
++    shipment = db.shipments[shipment_id]
++    if shipment.status == "delivered" or shipment.delivered_at is not None:
++        raise DomainError("E_BAD_STATE", f"shipment {shipment_id!r} has already been delivered")
++    old_customer_id = shipment.customer_id
++    shipment.customer_id = new_customer_id
++    audit.record(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=old_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reassign_shipment.py b/tests/unit/test_reassign_shipment.py
+--- a/tests/unit/test_reassign_shipment.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reassign_shipment.py	2026-11-12 04:24:43
+@@ -0,0 +1,135 @@
++import copy
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++def _seed_customer(cid, name="Cust"):
++    c = Customer(id=cid, name=name)
++    db.customers[cid] = c
++    return c
++
++
++def _seed_shipment(sid, customer_id, **kw):
++    s = Shipment(id=sid, customer_id=customer_id, weight_kg=1.0, zone="local", created_at=T0, **kw)
++    db.shipments[sid] = s
++    return s
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert audit.LOG == []
++
++
++@pytest.fixture(autouse=True)
++def seeded():
++    clock.set_fixed(T0)
++    _seed_customer("C1", "Old")
++    _seed_customer("C2", "New")
++    _seed_customer("C3", "Other")
++    _seed_shipment("shp_1", "C1")
++    _seed_shipment("shp_2", "C1")
++
++
++def _entry(at, from_id, to_id, sid="shp_1"):
++    return {
++        "action": "shipment.reassigned",
++        "entity_id": sid,
++        "at": at,
++        "details": {"from_customer_id": from_id, "to_customer_id": to_id},
++    }
++
++
++def test_reassigns_and_returns_shipment():
++    original = db.shipments["shp_1"]
++    customers_before = copy.deepcopy(db.customers)
++    result = shipments.reassign_shipment("shp_1", "C2")
++    assert result is original
++    assert db.shipments["shp_1"] is original
++    assert original.customer_id == "C2"
++    assert db.shipments["shp_2"].customer_id == "C1"
++    assert db.customers == customers_before
++    assert audit.LOG == [_entry(T0, "C1", "C2")]
++
++
++def test_other_fields_untouched():
++    s = db.shipments["shp_1"]
++    expected = copy.deepcopy(s)
++    expected.customer_id = "C2"
++    shipments.reassign_shipment("shp_1", "C2")
++    assert s == expected
++
++
++def test_repeated_reassignments_audited_with_clock():
++    shipments.reassign_shipment("shp_1", "C2")
++    t1 = T0 + timedelta(hours=1)
++    clock.set_fixed(t1)
++    shipments.reassign_shipment("shp_1", "C3")
++    assert db.shipments["shp_1"].customer_id == "C3"
++    assert audit.LOG == [_entry(T0, "C1", "C2"), _entry(t1, "C2", "C3")]
++
++
++def test_in_transit_shipment_can_be_reassigned():
++    _seed_shipment("shp_3", "C1", status="in_transit")
++    assert shipments.reassign_shipment("shp_3", "C2").customer_id == "C2"
++    assert audit.LOG == [_entry(T0, "C1", "C2", sid="shp_3")]
++
++
++def test_unknown_shipment():
++    _assert_rejected("E_NOT_FOUND", "shp_missing", "C2")
++
++
++def test_unknown_shipment_in_empty_store():
++    db.shipments.clear()
++    db.customers.clear()
++    _assert_rejected("E_NOT_FOUND", "shp_1", "C2")
++
++
++def test_unknown_customer():
++    _assert_rejected("E_UNKNOWN_CUSTOMER", "shp_1", "C_missing")
++
++
++def test_wrong_case_customer():
++    _assert_rejected("E_UNKNOWN_CUSTOMER", "shp_1", "c2")
++
++
++def test_wrong_case_shipment():
++    _assert_rejected("E_NOT_FOUND", "SHP_1", "C2")
++
++
++def test_delivered_status_rejected():
++    _seed_shipment("shp_d", "C1", status="delivered", delivered_at=T0)
++    _assert_rejected("E_BAD_STATE", "shp_d", "C2")
++
++
++def test_delivered_at_set_rejected():
++    _seed_shipment("shp_d", "C1", delivered_at=T0)
++    _assert_rejected("E_BAD_STATE", "shp_d", "C2")
++
++
++BAD = ["", "   ", None, True, False, 0, -1, 1.5, ["shp_1"]]
++
++
++@pytest.mark.parametrize("bad", BAD)
++def test_bad_shipment_id(bad):
++    _assert_rejected("E_BAD_INPUT",

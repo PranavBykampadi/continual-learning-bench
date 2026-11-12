@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:49:05
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: list shipments that no invoice refers to
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:49:05
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: read-only (no events); takes no arguments; returns `list[Shipment]` of shipments no invoice refers to (an invoice of any status counts), sorted by shipment id ascending; empty list if none; raises no errors
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:49:05
+@@ -22,3 +22,16 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    """Return shipments that no invoice refers to, sorted by shipment id.
++
++    Read-only: mutates nothing and emits no events. Invoices of any status
++    count as referring to their shipment.
++    """
++    invoiced = {i.shipment_id for i in db.invoices.values()}
++    return sorted(
++        (s for s in db.shipments.values() if s.id not in invoiced),
++        key=lambda s: s.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_without_invoice.py b/tests/unit/test_shipments_without_invoice.py
+--- a/tests/unit/test_shipments_without_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_without_invoice.py	2026-11-12 04:49:05
+@@ -0,0 +1,88 @@
++from parcelo import events, reports
++from parcelo.models import Invoice, Shipment
++from parcelo.store import db
++
++
++def _ship(sid):
++    db.shipments[sid] = Shipment(id=sid, customer_id="cus_1", weight_kg=1.0, zone="local")
++    return db.shipments[sid]
++
++
++def _inv(iid, sid, status="open"):
++    db.invoices[iid] = Invoice(id=iid, shipment_id=sid, amount=10.0, status=status)
++
++
++def test_empty_store_returns_empty_list():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_returns_only_uninvoiced():
++    _ship("shp_1")
++    _ship("shp_2")
++    _inv("inv_1", "shp_1")
++    assert [s.id for s in reports.shipments_without_invoice()] == ["shp_2"]
++
++
++def test_all_invoiced_returns_empty():
++    _ship("shp_1")
++    _inv("inv_1", "shp_1")
++    assert reports.shipments_without_invoice() == []
++
++
++def test_invoice_of_any_status_counts():
++    _ship("shp_1")
++    _ship("shp_2")
++    _inv("inv_1", "shp_1", status="paid")
++    _inv("inv_2", "shp_2", status="open")
++    assert reports.shipments_without_invoice() == []
++
++
++def test_multiple_invoices_for_one_shipment():
++    _ship("shp_1")
++    _inv("inv_1", "shp_1")
++    _inv("inv_2", "shp_1")
++    assert reports.shipments_without_invoice() == []
++
++
++def test_invoice_for_missing_shipment_ignored():
++    _ship("shp_1")
++    _inv("inv_1", "shp_zzz")
++    assert [s.id for s in reports.shipments_without_invoice()] == ["shp_1"]
++
++
++def test_near_miss_shipment_id_does_not_match():
++    _ship("shp_1")
++    _inv("inv_1", "SHP_1")
++    _inv("inv_2", " shp_1 ")
++    assert [s.id for s in reports.shipments_without_invoice()] == ["shp_1"]
++
++
++def test_sorted_by_id_when_seeded_out_of_order():
++    for sid in ["shp_3", "shp_1", "shp_2"]:
++        _ship(sid)
++    assert [s.id for s in reports.shipments_without_invoice()] == ["shp_1", "shp_2", "shp_3"]
++
++
++def test_returns_the_stored_records():
++    s = _ship("shp_1")
++    assert reports.shipments_without_invoice()[0] is s
++
++
++def test_read_only_no_events_no_mutation():
++    _ship("shp_1")
++    _ship("shp_2")
++    _inv("inv_1", "shp_2")
++    before_events = list(events.OUTBOX)
++    before_ships = dict(db.shipments)
++    before_invs = dict(db.invoices)
++    reports.shipments_without_invoice()
++    assert list(events.OUTBOX) == before_events
++    assert db.shipments == before_ships
++    assert db.invoices == before_invs
++
++
++def test_calling_twice_same_result():
++    _ship("shp_2")
++    _ship("shp_1")
++    first = reports.shipments_without_invoice()
++    assert reports.shipments_without_invoice() == first

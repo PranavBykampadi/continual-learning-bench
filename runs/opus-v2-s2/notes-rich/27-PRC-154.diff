@@ -1,0 +1,178 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:37:43
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: reactivate an inactive customer (PRC-154)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:37:44
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.reactivate_customer(customer_id)`: set a customer back to active (idempotent)
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:37:41
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,20 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def reactivate_customer(customer_id):
++    """Switch a customer's ``active`` flag back on and return the customer.
++
++    Idempotent: an already-active customer is returned unchanged, with no event.
++    """
++    if not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(customer_id))
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if customer.active:
++        return customer
++    customer.active = True
++    events.emit("customer.reactivated", customer.id)
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reactivate_customer.py b/tests/unit/test_reactivate_customer.py
+--- a/tests/unit/test_reactivate_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reactivate_customer.py	2026-11-12 04:37:55
+@@ -0,0 +1,120 @@
++import copy
++import math
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import clock, customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def _seed_customer(cid="C1", active=False, **kw):
++    c = Customer(id=cid, name=kw.pop("name", "Acme"), active=active, **kw)
++    db.customers[cid] = c
++    return c
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        customers.reactivate_customer(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_reactivates_inactive_customer():
++    c = _seed_customer("C1", active=False, tier="gold", credit_limit=750.0)
++    other = _seed_customer("C2", active=False, name="Other")
++    db.shipments["S1"] = Shipment(id="S1", customer_id="C1", weight_kg=1.0, zone="local")
++    db.invoices["I1"] = Invoice(id="I1", shipment_id="S1", amount=10.0)
++    shipments_before = copy.deepcopy(db.shipments)
++    invoices_before = copy.deepcopy(db.invoices)
++
++    result = customers.reactivate_customer("C1")
++
++    assert result is c
++    assert db.customers["C1"] is c
++    assert c.active is True
++    assert (c.id, c.name, c.tier, c.credit_limit) == ("C1", "Acme", "gold", 750.0)
++    assert other.active is False
++    assert len(db.customers) == 2
++    assert db.shipments == shipments_before
++    assert db.invoices == invoices_before
++    assert events.OUTBOX == [
++        {"name": "customer.reactivated", "entity_id": "C1", "at": T0, "payload": {}}
++    ]
++
++
++def test_already_active_is_idempotent_noop():
++    c = _seed_customer("C1", active=True)
++    before = _snapshot()
++    assert customers.reactivate_customer("C1") is c
++    assert c.active is True
++    assert events.OUTBOX == []
++    assert _snapshot() == before
++
++
++def test_retry_after_reactivation_emits_once():
++    c = _seed_customer("C1", active=False)
++    assert customers.reactivate_customer("C1") is c
++    assert len(events.OUTBOX) == 1
++    before = _snapshot()
++    clock.set_fixed(T0 + timedelta(hours=1))
++    assert customers.reactivate_customer("C1") is c
++    assert events.OUTBOX == [
++        {"name": "customer.reactivated", "entity_id": "C1", "at": T0, "payload": {}}
++    ]
++    assert _snapshot() == before
++
++
++def test_reactivate_two_customers_at_different_times():
++    _seed_customer("C1")
++    _seed_customer("C2")
++    customers.reactivate_customer("C1")
++    t1 = T0 + timedelta(minutes=5)
++    clock.set_fixed(t1)
++    customers.reactivate_customer("C2")
++    assert events.OUTBOX == [
++        {"name": "customer.reactivated", "entity_id": "C1", "at": T0, "payload": {}},
++        {"name": "customer.reactivated", "entity_id": "C2", "at": t1, "payload": {}},
++    ]
++
++
++def test_unknown_customer_rejected():
++    _seed_customer("C1")
++    _assert_rejected("E_UNKNOWN_CUSTOMER", "C999")
++
++
++def test_wrong_case_id_rejected():
++    _seed_customer("C1")
++    _assert_rejected("E_UNKNOWN_CUSTOMER", "c1")
++
++
++def test_empty_store_rejected():
++    _assert_rejected("E_UNKNOWN_CUSTOMER", "C1")
++
++
++@pytest.mark.parametrize(
++    "bad",
++    ["", "   ", None, 1, True, False, 0, -1, 1.5, math.nan, math.inf, ["C1"],
++     datetime(2026, 1, 1)],
++)
++def test_bad_input_rejected(bad):
++    _seed_customer("C1")
++    _assert_rejected("E_BAD_INPUT", bad)

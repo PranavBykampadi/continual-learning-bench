@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:17:21
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4108", "action": "verify", "customer": "C-1008", "order": "MP-20108", "ok": true}
++{"n": 2, "case": "CS-4108", "action": "escalate", "team": "billing-review", "note": "Both glazed planters (2 x $90) on MP-20108 arrived broken in transit; customer requests $180 refund. Over $75 support limit."}
++{"n": 3, "case": "CS-4108", "action": "credit", "customer": "C-1008", "amount": 15.0}
++{"n": 4, "case": "CS-4108", "action": "tag", "label": "product"}
++{"n": 5, "case": "CS-4108", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:17:21
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4108": {
++    "status": "closed",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "billing-review"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:17:08
+@@ -61,7 +61,7 @@
+     "email": "marisol.vega@example.com",
+     "locale": "es-MX",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1009",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4108.md b/outbox/CS-4108.md
+--- a/outbox/CS-4108.md	1969-12-31 19:00:00
++++ b/outbox/CS-4108.md	2026-11-12 04:17:12
+@@ -0,0 +1,12 @@
++Hola Marisol,
++
++I'm so sorry both glazed planters on order MP-20108 arrived broken. That's not the condition they should have reached you in.
++
++I've passed your refund request for the planters to our billing team for review and approval. They'll follow up with you once it has been reviewed.
++
++For the hassle, I've added $15 in store credit to your account as an apology. It will apply automatically at your next checkout.
++
++If you have any questions in the meantime, or need anything else, just reply and we'll help.
++
++Warmly,
++The Marlowe & Pine Crew

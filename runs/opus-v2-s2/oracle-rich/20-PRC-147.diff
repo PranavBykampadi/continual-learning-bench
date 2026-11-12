@@ -1,0 +1,136 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:23:17
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:23:19
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: shipment count and volume tier for every customer, keyed by customer id
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:23:16
+@@ -1,5 +1,9 @@
+ from datetime import datetime
+ 
++from parcelo.settings import (
++    VOLUME_TIER_BULK_MIN_SHIPMENTS,
++    VOLUME_TIER_REGULAR_MIN_SHIPMENTS,
++)
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +26,30 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def _volume_tier(shipment_count):
++    if shipment_count >= VOLUME_TIER_BULK_MIN_SHIPMENTS:
++        return "bulk"
++    if shipment_count >= VOLUME_TIER_REGULAR_MIN_SHIPMENTS:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Shipment count and volume tier per customer, keyed by customer id.
++
++    Every customer is included, even those with no shipments. Keys are
++    ordered by customer id ascending.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {
++            "shipments": counts[customer_id],
++            "tier": _volume_tier(counts[customer_id]),
++        }
++        for customer_id in sorted(counts)
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 04:23:08
+@@ -0,0 +1,5 @@
++"""Business thresholds, limits and rates used by parcelo."""
++
++# Minimum shipment counts for each customer volume tier.
++VOLUME_TIER_BULK_MIN_SHIPMENTS = 50
++VOLUME_TIER_REGULAR_MIN_SHIPMENTS = 10
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 04:23:25
+@@ -0,0 +1,57 @@
++from parcelo import customers, reports, shipments
++from parcelo.settings import (
++    VOLUME_TIER_BULK_MIN_SHIPMENTS,
++    VOLUME_TIER_REGULAR_MIN_SHIPMENTS,
++)
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1, "local")
++
++
++def test_empty_store():
++    assert reports.volume_report() == {}
++
++
++def test_customer_without_shipments_is_included():
++    c = customers.add_customer("Idle")
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_and_tiers_at_thresholds():
++    starter = customers.add_customer("Small")
++    regular = customers.add_customer("Mid")
++    bulk = customers.add_customer("Big")
++    almost_bulk = customers.add_customer("Almost")
++    _ship(starter.id, 1)
++    _ship(regular.id, VOLUME_TIER_REGULAR_MIN_SHIPMENTS)
++    _ship(bulk.id, VOLUME_TIER_BULK_MIN_SHIPMENTS)
++    _ship(almost_bulk.id, VOLUME_TIER_BULK_MIN_SHIPMENTS - 1)
++
++    report = reports.volume_report()
++
++    assert report[starter.id] == {"shipments": 1, "tier": "starter"}
++    assert report[regular.id] == {
++        "shipments": VOLUME_TIER_REGULAR_MIN_SHIPMENTS,
++        "tier": "regular",
++    }
++    assert report[bulk.id] == {
++        "shipments": VOLUME_TIER_BULK_MIN_SHIPMENTS,
++        "tier": "bulk",
++    }
++    assert report[almost_bulk.id] == {
++        "shipments": VOLUME_TIER_BULK_MIN_SHIPMENTS - 1,
++        "tier": "regular",
++    }
++
++
++def test_just_below_regular_is_starter():
++    c = customers.add_customer("Edge")
++    _ship(c.id, VOLUME_TIER_REGULAR_MIN_SHIPMENTS - 1)
++    assert reports.volume_report()[c.id]["tier"] == "starter"
++
++
++def test_keys_sorted_by_customer_id():
++    ids = [customers.add_customer("C%d" % i).id for i in range(5)]
++    assert list(reports.volume_report()) == sorted(ids)

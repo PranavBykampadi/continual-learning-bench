@@ -1,0 +1,54 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:15:57
+@@ -0,0 +1,3 @@
++{"n": 1, "case": "CS-4108", "action": "refund", "order": "MP-20108", "amount": 180.0}
++{"n": 2, "case": "CS-4108", "action": "credit", "customer": "C-1008", "amount": 30.0}
++{"n": 3, "case": "CS-4108", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:15:57
+@@ -1 +1,7 @@
+-{}
++{
++  "CS-4108": {
++    "status": "closed",
++    "tags": [],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:15:46
+@@ -61,7 +61,7 @@
+     "email": "marisol.vega@example.com",
+     "locale": "es-MX",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 30.0
+   },
+   {
+     "id": "C-1009",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/orders.json b/orders.json
+--- a/orders.json	2026-11-12 01:25:24
++++ b/orders.json	2026-11-12 04:15:44
+@@ -165,7 +165,7 @@
+     ],
+     "shipping": 0.0,
+     "total": 180.0,
+-    "refunded": 0.0,
++    "refunded": 180.0,
+     "carrier": "Northline",
+     "delivered": "2026-11-06"
+   },
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4108.md b/outbox/CS-4108.md
+--- a/outbox/CS-4108.md	1969-12-31 19:00:00
++++ b/outbox/CS-4108.md	2026-11-12 04:15:55
+@@ -0,0 +1,6 @@
++Hola Marisol,
++
++Siento mucho que los maceteros llegaran rotos. He procesado el reembolso de $180 por el pedido MP-20108 y he añadido un crédito de $30 a tu cuenta por las molestias causadas.
++
++Saludos,
++Marlowe & Pine Support
+\ No newline at end of file

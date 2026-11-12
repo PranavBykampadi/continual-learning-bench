@@ -1,0 +1,50 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:19:22
+@@ -0,0 +1,4 @@
++{"n": 1, "case": "CS-4116", "action": "verify", "customer": "C-1016", "order": "MP-20116", "ok": true}
++{"n": 2, "case": "CS-4116", "action": "credit", "customer": "C-1016", "amount": 15.0}
++{"n": 3, "case": "CS-4116", "action": "tag", "label": "shipping"}
++{"n": 4, "case": "CS-4116", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:19:22
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4116": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:19:16
+@@ -125,7 +125,7 @@
+     "email": "sam.patel@example.com",
+     "locale": "en-US",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1017",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4116.md b/outbox/CS-4116.md
+--- a/outbox/CS-4116.md	1969-12-31 19:00:00
++++ b/outbox/CS-4116.md	2026-11-12 04:19:20
+@@ -0,0 +1,12 @@
++Hi Sam,
++
++Thank you for reaching out about order MP-20116, your Bamboo shelf. I'm really sorry the wait has felt so long. That's frustrating when you're looking forward to something.
++
++I checked the order, and the shelf is still in transit with Northline. The carrier's current estimated delivery date is November 24, 2026. I can't guarantee a firm date because the carrier controls the final delivery, but you can follow the latest updates with tracking number NL-330981.
++
++To make up for the inconvenience, I've added $15.00 in store credit to your account. It will apply automatically at your next checkout.
++
++If the shelf hasn't arrived by November 24 or the tracking stops updating, just reply to this email and we'll follow up with the carrier for you. Please also reach out if you have any other questions.
++
++Warmly,
++The Marlowe & Pine Crew

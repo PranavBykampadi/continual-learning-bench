@@ -1,0 +1,124 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:35:02
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:35:03
+@@ -7,6 +7,10 @@
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
++## reports
++
++- `reports.volume_report()`: shipment count and volume tier for every customer
++
+ ## shipments
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:34:54
+@@ -14,6 +14,28 @@
+     return counts
+ 
+ 
++VOLUME_TIERS = ((50, "bulk"), (10, "regular"), (0, "starter"))  # same thresholds as legacy volume_tier
++
++
++def _volume_tier(shipment_count):
++    for minimum, label in VOLUME_TIERS:
++        if shipment_count >= minimum:
++            return label
++    return VOLUME_TIERS[-1][1]
++
++
++def volume_report():
++    """Shipment count and volume tier per customer, including customers with none."""
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 04:35:00
+@@ -0,0 +1,63 @@
++import pytest
++
++from parcelo import customers, events, reports, shipments
++from parcelo.store import db
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1, "local")
++
++
++def test_empty_store():
++    assert reports.volume_report() == {}
++
++
++def test_customer_without_shipments_included():
++    c = customers.add_customer("Acme")
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    _ship(a.id, 3)
++    _ship(b.id, 1)
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++@pytest.mark.parametrize(
++    "count,tier",
++    [(0, "starter"), (9, "starter"), (10, "regular"), (49, "regular"), (50, "bulk"), (75, "bulk")],
++)
++def test_tier_thresholds(count, tier):
++    c = customers.add_customer("Acme")
++    _ship(c.id, count)
++    assert reports.volume_report()[c.id] == {"shipments": count, "tier": tier}
++
++
++def test_all_statuses_counted_and_inactive_included():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 2)
++    s = next(iter(db.shipments.values()))
++    s.status = "cancelled"
++    c.active = False
++    assert reports.volume_report()[c.id]["shipments"] == 2
++
++
++def test_orphan_shipment_skipped():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 1)
++    del db.customers[c.id]
++    assert reports.volume_report() == {}
++
++
++def test_read_only():
++    c = customers.add_customer("Acme")
++    _ship(c.id, 2)
++    before = len(events.OUTBOX)
++    reports.volume_report()
++    assert len(events.OUTBOX) == before
++    assert len(db.shipments) == 2

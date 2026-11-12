@@ -1,0 +1,49 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:14:32
+@@ -0,0 +1,3 @@
++{"n": 1, "case": "CS-4113", "action": "credit", "customer": "C-1013", "amount": 15.0}
++{"n": 2, "case": "CS-4113", "action": "tag", "label": "shipping"}
++{"n": 3, "case": "CS-4113", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:14:32
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4113": {
++    "status": "closed",
++    "tags": [
++      "shipping"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:14:29
+@@ -101,7 +101,7 @@
+     "email": "ana.lima@example.com",
+     "locale": "pt-BR",
+     "tier": "plus",
+-    "credit_balance": 0.0
++    "credit_balance": 15.0
+   },
+   {
+     "id": "C-1014",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4113.md b/outbox/CS-4113.md
+--- a/outbox/CS-4113.md	1969-12-31 19:00:00
++++ b/outbox/CS-4113.md	2026-11-12 04:14:31
+@@ -0,0 +1,12 @@
++Olá Ana,
++
++Thank you for reaching out about your Rattan basket (order MP-20113), and I'm sorry for the frustration of waiting on it.
++
++I've checked the order: it is currently in transit with our carrier, Northline. I'm not able to promise an exact arrival date, but you can follow its progress at any time with tracking number NL-902215, which shows the latest updates as they come in.
++
++I understand you asked for $50 in credit. The most I'm able to offer as a goodwill gesture is $15, so I've added $15 in store credit to your account. It will apply automatically at checkout on your next order.
++
++If the tracking stops updating or anything looks wrong, just reply to this email and we'll follow up with the carrier right away.
++
++Warmly,
++The Marlowe & Pine Crew

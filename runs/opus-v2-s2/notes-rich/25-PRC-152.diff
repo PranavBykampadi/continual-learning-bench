@@ -1,0 +1,182 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:35:33
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: mark a shipment lost in transit (PRC-152)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:35:34
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_lost(shipment_id)`: mark a shipment lost in transit
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 04:35:37
+@@ -28,3 +28,18 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_lost(shipment_id):
++    if not isinstance(shipment_id, str) or not shipment_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(shipment_id))
++    shipment = db.shipments.get(shipment_id)
++    if shipment is None:
++        raise DomainError("E_NOT_FOUND", shipment_id)
++    # Delivered and lost are terminal: a repeat call must not emit a second event.
++    if shipment.status in ("delivered", "lost"):
++        raise DomainError("E_BAD_STATE", f"{shipment_id} is {shipment.status}")
++    previous_status = shipment.status
++    shipment.status = "lost"
++    events.emit("shipment.lost", shipment.id, previous_status=previous_status)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_lost.py b/tests/unit/test_mark_lost.py
+--- a/tests/unit/test_mark_lost.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_lost.py	2026-11-12 04:35:49
+@@ -0,0 +1,134 @@
++import copy
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import clock, events, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++CREATED_AT = T0 - timedelta(days=1)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def _seed_customer(cid="cus_1"):
++    c = Customer(id=cid, name="Acme")
++    db.customers[cid] = c
++    return c
++
++
++def _seed_shipment(sid, status="created", **kw):
++    s = Shipment(id=sid, customer_id="cus_1", weight_kg=2.5, zone="national",
++                 status=status, created_at=CREATED_AT, **kw)
++    db.shipments[sid] = s
++    return s
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def _lost_event(sid, at, previous_status):
++    return {"name": "shipment.lost", "entity_id": sid, "at": at,
++            "payload": {"previous_status": previous_status}}
++
++
++def test_marks_shipment_lost():
++    _seed_customer()
++    s = _seed_shipment("shp_2", notes=["fragile"])
++    other = _seed_shipment("shp_1")
++
++    result = shipments.mark_lost("shp_2")
++
++    assert result is s
++    assert db.shipments["shp_2"] is s
++    assert s.status == "lost"
++    # untouched fields preserved
++    assert s.notes == ["fragile"]
++    assert (s.customer_id, s.weight_kg, s.zone) == ("cus_1", 2.5, "national")
++    assert s.created_at == CREATED_AT
++    assert s.delivered_at is None
++    # unrelated entity untouched
++    assert other.status == "created"
++    assert len(db.shipments) == 2
++    assert events.OUTBOX == [_lost_event("shp_2", T0, "created")]
++
++
++def test_events_use_clock_at_each_call():
++    _seed_shipment("shp_1")
++    _seed_shipment("shp_2", status="in_transit")
++    shipments.mark_lost("shp_1")
++    t1 = T0 + timedelta(hours=1)
++    clock.set_fixed(t1)
++    shipments.mark_lost("shp_2")
++    assert events.OUTBOX == [
++        _lost_event("shp_1", T0, "created"),
++        _lost_event("shp_2", t1, "in_transit"),
++    ]
++
++
++def test_unknown_shipment_rejected():
++    _seed_customer()
++    _seed_shipment("shp_1")
++    _assert_rejected("E_NOT_FOUND", "shp_missing")
++
++
++def test_empty_store_rejected():
++    _assert_rejected("E_NOT_FOUND", "shp_1")
++
++
++def test_id_is_case_sensitive():
++    _seed_shipment("shp_1")
++    _assert_rejected("E_NOT_FOUND", "SHP_1")
++
++
++@pytest.mark.parametrize("bad", [
++    "", "   ", None, 0, 1, -1, True, False, 1.5, float("nan"), float("inf"),
++    ["shp_1"], datetime(2026, 1, 1),
++])
++def test_bad_input_rejected(bad):
++    _seed_shipment("shp_1")
++    _assert_rejected("E_BAD_INPUT", bad)
++
++
++def test_delivered_rejected():
++    _seed_shipment("shp_1", status="delivered", delivered_at=CREATED_AT)
++    _assert_rejected("E_BAD_STATE", "shp_1")
++
++
++def test_already_lost_rejected():
++    _seed_shipment("shp_1", status="lost")
++    _assert_rejected("E_BAD_STATE", "shp_1")
++
++
++def test_repeat_call_rejected():
++    _seed_shipment("shp_1")
++    shipments.mark_lost("shp_1")
++    events.OUTBOX.clear()
++    _assert_rejected("E_BAD_STATE", "shp_1")
++
++
++@pytest.mark.parametrize("status", ["created", "in_transit", "Delivered", "LOST", ""])
++def test_non_terminal_statuses_allowed(status):
++    # Status match is exact; only "delivered" and "lost" are terminal.
++    s = _seed_shipment("shp_1", status=status)
++    assert shipments.mark_lost("shp_1") is s
++    assert s.status == "lost"
++    assert events.OUTBOX == [_lost_event("shp_1", T0, status)]

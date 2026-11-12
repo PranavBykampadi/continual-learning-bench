@@ -1,0 +1,174 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:22:10
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- invoices: apply a credit to an open invoice (PRC-113)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 04:22:10
+@@ -1,7 +1,12 @@
+ import uuid
+ from datetime import datetime
+ 
++from decimal import Decimal, InvalidOperation
++
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +37,44 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def _parse_credit(amount):
++    if isinstance(amount, bool) or not isinstance(amount, (Money, int, float, str, Decimal)):
++        raise DomainError("E_BAD_INPUT", f"credit amount {amount!r} is not a money value")
++    try:
++        credit = Money.parse(amount.strip() if isinstance(amount, str) else amount)
++    except (InvalidOperation, ValueError, ArithmeticError) as exc:
++        raise DomainError("E_BAD_INPUT", f"credit amount {amount!r} is not a money value") from exc
++    if credit.cents <= 0:
++        raise DomainError("E_BAD_INPUT", f"credit amount {amount!r} must be positive")
++    return credit
++
++
++def apply_credit(invoice_id, amount):
++    """Reduce an open invoice's amount by a credit and return the remaining Money."""
++    if not isinstance(invoice_id, str) or invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"invoice {invoice_id!r} does not exist")
++    invoice = db.invoices[invoice_id]
++    credit = _parse_credit(amount)
++    if invoice.status != "open":
++        raise DomainError(
++            "E_BAD_STATE", f"invoice {invoice_id!r} is {invoice.status!r}, not open"
++        )
++    current = Money.parse(invoice.amount)
++    if current < credit:
++        raise DomainError(
++            "E_BAD_INPUT", f"credit {credit} exceeds invoice {invoice_id!r} amount {current}"
++        )
++    remaining = current - credit
++    # Invoice.amount is a legacy float field read by reports and customer balances;
++    # write it back as an exact dollar value derived from integer cents.
++    invoice.amount = float(Decimal(remaining.cents) / 100)
++    audit.record(
++        "invoice.credit_applied",
++        invoice.id,
++        credit=credit,
++        previous=current,
++        remaining=remaining,
++    )
++    return remaining
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_apply_credit.py b/tests/unit/test_apply_credit.py
+--- a/tests/unit/test_apply_credit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_apply_credit.py	2026-11-12 04:22:28
+@@ -0,0 +1,165 @@
++import copy
++from datetime import datetime, timezone
++from decimal import Decimal
++
++import pytest
++
++from parcelo import audit, clock, customers, invoices, reports
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++T1 = datetime(2026, 11, 12, 10, 30, tzinfo=timezone.utc)
++
++
++def _seed_customer(cid="cus_000001"):
++    customer = Customer(id=cid, name="Acme")
++    db.customers[cid] = customer
++    return customer
++
++
++def _seed_shipment(sid="shp_000001", cid="cus_000001"):
++    shipment = Shipment(id=sid, customer_id=cid, weight_kg=2.0, zone="local")
++    db.shipments[sid] = shipment
++    return shipment
++
++
++def _seed_invoice(iid="inv_000001", sid="shp_000001", amount=100.0, status="open"):
++    invoice = Invoice(id=iid, shipment_id=sid, amount=amount, status=status, issued_at=T0)
++    db.invoices[iid] = invoice
++    return invoice
++
++
++def _seed_world(amount=100.0, status="open"):
++    _seed_customer()
++    _seed_shipment()
++    return _seed_invoice(amount=amount, status=status)
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert audit.LOG == []
++
++
++def test_happy_path_reduces_amount_and_audits():
++    clock.set_fixed(T0)
++    invoice = _seed_world(amount=100.0)
++    other = _seed_invoice(iid="inv_000002", amount=40.0)
++
++    remaining = invoices.apply_credit("inv_000001", Money(2550))
++
++    assert remaining == Money(7450)
++    assert db.invoices["inv_000001"] is invoice
++    assert invoice.amount == 74.50
++    assert invoice.status == "open"
++    assert invoice.paid_at is None
++    assert other.amount == 40.0
++    assert audit.LOG == [
++        {
++            "action": "invoice.credit_applied",
++            "entity_id": "inv_000001",
++            "at": T0,
++            "details": {
++                "credit": Money(2550),
++                "previous": Money(10000),
++                "remaining": Money(7450),
++            },
++        }
++    ]
++
++
++def test_successive_credits_each_audited_with_own_time():
++    clock.set_fixed(T0)
++    invoice = _seed_world(amount=50.0)
++    assert invoices.apply_credit("inv_000001", Money(1000)) == Money(4000)
++    clock.set_fixed(T1)
++    assert invoices.apply_credit("inv_000001", "15.25") == Money(2475)
++    assert invoice.amount == 24.75
++    assert [(e["at"], e["details"]["remaining"]) for e in audit.LOG] == [
++        (T0, Money(4000)),
++        (T1, Money(2475)),
++    ]
++    assert all(e["entity_id"] == "inv_000001" for e in audit.LOG)
++
++
++def test_full_credit_leaves_zero():
++    clock.set_fixed(T0)
++    invoice = _seed_world(amount=19.99)
++    assert invoices.apply_credit("inv_000001", Money(1999)) == Mone

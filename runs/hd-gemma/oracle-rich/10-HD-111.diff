@@ -1,0 +1,35 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:14:51
+@@ -0,0 +1,2 @@
++{"n": 1, "case": "CS-4111", "action": "escalate", "team": "finance-ops", "note": "Customer Etienne Dubois (C-1011) received a 4x6 rug instead of the 5x8 rug ordered in MP-20111. Requesting refund of 50."}
++{"n": 2, "case": "CS-4111", "action": "tag", "label": "product"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:14:51
+@@ -1 +1,11 @@
+-{}
++{
++  "CS-4111": {
++    "status": "open",
++    "tags": [
++      "product"
++    ],
++    "escalated_to": [
++      "finance-ops"
++    ]
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4111.md b/outbox/CS-4111.md
+--- a/outbox/CS-4111.md	1969-12-31 19:00:00
++++ b/outbox/CS-4111.md	2026-11-12 04:15:03
+@@ -0,0 +1,8 @@
++Bonjour Étienne,
++
++I am very sorry to hear that you received the 4x6 rug instead of the 5x8 rug you ordered.
++
++Since the refund amount of $150 exceeds our direct refund limit, I have escalated your request to our finance operations team for processing. They will handle the refund for your order MP-20111.
++
++Warmly,
++The Marlowe & Pine Crew
+\ No newline at end of file

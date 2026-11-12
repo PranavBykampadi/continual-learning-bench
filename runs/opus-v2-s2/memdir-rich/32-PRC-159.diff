@@ -1,0 +1,122 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:52:18
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-159] shipments: list shipments by zone
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:52:19
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.shipments_in_zone(zone)`: all shipments going to a zone (any status), sorted by id; unknown zone raises `E_BAD_ZONE`
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 04:52:16
+@@ -28,3 +28,17 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def shipments_in_zone(zone):
++    """Return all shipments (any status) going to ``zone``, sorted by id.
++
++    Raises DomainError E_BAD_ZONE if ``zone`` is not a known zone.
++    Read-only: emits no events.
++    """
++    if not isinstance(zone, str) or zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", repr(zone))
++    return sorted(
++        (s for s in db.shipments.values() if s.zone == zone),
++        key=lambda x: x.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_in_zone.py b/tests/unit/test_shipments_in_zone.py
+--- a/tests/unit/test_shipments_in_zone.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_in_zone.py	2026-11-12 04:52:27
+@@ -0,0 +1,75 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Shipment
++from parcelo.rates import ZONE_BASE
++from parcelo.store import db
++
++
++@pytest.fixture
++def customer():
++    return customers.add_customer("Acme")
++
++
++def test_returns_only_shipments_in_zone(customer):
++    a1 = shipments.create_shipment(customer.id, 1, "local")
++    shipments.create_shipment(customer.id, 2, "national")
++    a2 = shipments.create_shipment(customer.id, 3, "local")
++    shipments.create_shipment(customer.id, 4, "international")
++
++    assert shipments.shipments_in_zone("local") == [a1, a2]
++
++
++def test_every_known_zone_accepted(customer):
++    for zone in ZONE_BASE:
++        s = shipments.create_shipment(customer.id, 1, zone)
++        assert shipments.shipments_in_zone(zone) == [s]
++
++
++def test_no_matches_returns_empty_list(customer):
++    shipments.create_shipment(customer.id, 1, "local")
++    assert shipments.shipments_in_zone("international") == []
++
++
++def test_empty_store_returns_empty_list():
++    assert shipments.shipments_in_zone("local") == []
++
++
++def test_includes_every_status(customer):
++    created = shipments.create_shipment(customer.id, 1, "national")
++    cancelled = shipments.create_shipment(customer.id, 1, "national")
++    cancelled.status = "cancelled"
++    delivered = shipments.create_shipment(customer.id, 1, "national")
++    delivered.status = "delivered"
++
++    assert shipments.shipments_in_zone("national") == [created, cancelled, delivered]
++
++
++def test_sorted_by_id_not_insertion_order():
++    for sid in ["shp_000003", "shp_000001", "shp_000002"]:
++        db.shipments[sid] = Shipment(id=sid, customer_id="C1", weight_kg=1, zone="local")
++
++    result = shipments.shipments_in_zone("local")
++
++    assert [s.id for s in result] == ["shp_000001", "shp_000002", "shp_000003"]
++    assert result == sorted(db.shipments.values(), key=lambda x: x.id)
++
++
++@pytest.mark.parametrize("zone", ["mars", "Local", "", None, 1])
++def test_unknown_zone_fails(zone):
++    with pytest.raises(DomainError) as err:
++        shipments.shipments_in_zone(zone)
++    assert err.value.code == "E_BAD_ZONE"
++
++
++def test_is_read_only_and_returns_new_list(customer):
++    shipments.create_shipment(customer.id, 1, "local")
++    outbox_before = len(events.OUTBOX)
++
++    result = shipments.shipments_in_zone("local")
++    result.clear()
++
++    assert len(events.OUTBOX) == outbox_before
++    assert len(shipments.shipments_in_zone("local")) == 1
++    assert len(db.shipments) == 1

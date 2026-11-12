@@ -1,0 +1,49 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 04:29:03
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,12 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++INVOICE_STATUSES = ("open", "paid")
++
++
++def invoices_by_status(status):
++    if status not in INVOICE_STATUSES:
++        raise DomainError("E_BAD_INPUT", f"unknown invoice status: {status!r}")
++    return [i for i in db.invoices.values() if i.status == status]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 04:29:03
+@@ -7,3 +7,21 @@
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_invoices_by_status():
++    import pytest
++    from parcelo.errors import DomainError
++
++    assert invoices.invoices_by_status("open") == []
++    assert invoices.invoices_by_status("paid") == []
++    c = customers.add_customer("Acme")
++    a = invoices.issue_invoice(shipments.create_shipment(c.id, 2, "local").id)
++    b = invoices.issue_invoice(shipments.create_shipment(c.id, 3, "local").id)
++    invoices.mark_paid(b.id)
++    assert invoices.invoices_by_status("open") == [a]
++    assert invoices.invoices_by_status("paid") == [b]
++    for bad in ("void", "", None, "OPEN"):
++        with pytest.raises(DomainError) as e:
++            invoices.invoices_by_status(bad)
++        assert e.value.code == "E_BAD_INPUT"

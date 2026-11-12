@@ -1,0 +1,157 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:38:45
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: list customers by tier (PRC-155)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:38:46
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.customers_by_tier(tier)`: customers on a known tier (includes inactive; read-only)
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:38:44
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,19 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def customers_by_tier(tier):
++    """Return the customers on ``tier``, in insertion order.
++
++    Read-only: emits no events. Inactive customers are included. Returns a
++    new list on every call (empty if no customer is on the tier). Raises
++    ``DomainError("E_BAD_INPUT")`` if ``tier`` is not one of ``TIERS``
++    (matching is exact and case-sensitive).
++    """
++    if not isinstance(tier, str) or tier not in TIERS:
++        raise DomainError("E_BAD_INPUT", repr(tier))
++    return [c for c in db.customers.values() if c.tier == tier]
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_by_tier.py b/tests/unit/test_customers_by_tier.py
+--- a/tests/unit/test_customers_by_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_by_tier.py	2026-11-12 04:38:55
+@@ -0,0 +1,101 @@
++import copy
++import math
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def _seed_customer(cid, tier="standard", active=True):
++    c = Customer(id=cid, name=cid, tier=tier, active=active)
++    db.customers[cid] = c
++    return c
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices, events.OUTBOX))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        customers.customers_by_tier(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_returns_customers_on_tier_in_insertion_order():
++    g1 = _seed_customer("C1", "gold")
++    _seed_customer("C2", "standard")
++    g2 = _seed_customer("C3", "gold")
++    result = customers.customers_by_tier("gold")
++    assert result == [g1, g2]
++    assert result[0] is g1 and result[1] is g2
++
++
++def test_standard_tier():
++    _seed_customer("C1", "gold")
++    s = _seed_customer("C2", "standard")
++    assert customers.customers_by_tier("standard") == [s]
++
++
++def test_includes_inactive_customers():
++    a = _seed_customer("C1", "gold", active=False)
++    assert customers.customers_by_tier("gold") == [a]
++
++
++@pytest.mark.parametrize("tier", customers.TIERS)
++def test_empty_store_returns_empty_list(tier):
++    assert customers.customers_by_tier(tier) == []
++
++
++def test_no_customers_on_tier_returns_empty_list():
++    _seed_customer("C1", "standard")
++    assert customers.customers_by_tier("gold") == []
++
++
++def test_read_only_and_fresh_result():
++    _seed_customer("C1", "gold")
++    db.shipments["S1"] = Shipment(id="S1", customer_id="C1", weight_kg=1, zone="local")
++    db.invoices["I1"] = Invoice(id="I1", shipment_id="S1", amount=10.0)
++    before = _snapshot()
++    first = customers.customers_by_tier("gold")
++    second = customers.customers_by_tier("gold")
++    assert first == second
++    assert first is not second
++    first.clear()
++    assert customers.customers_by_tier("gold") == second
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++    assert len(db.customers) == 1
++
++
++@pytest.mark.parametrize(
++    "tier",
++    [
++        "", "   ", None, 1, 0, -1, True, False, 1.5, math.nan, math.inf,
++        ["gold"], ("gold",), datetime(2026, 1, 1),
++        "Gold", "GOLD", " gold", "gold ", "platinum",
++    ],
++)
++def test_bad_tier_rejected(tier):
++    _seed_customer("C1", "gold")
++    _assert_rejected("E_BAD_INPUT", tier)
++
++
++def test_bad_tier_rejected_on_empty_store():
++    _assert_rejected("E_BAD_INPUT", "platinum")

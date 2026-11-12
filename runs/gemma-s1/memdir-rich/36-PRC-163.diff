@@ -1,0 +1,58 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:38:28
+@@ -20,10 +20,16 @@
+     return db.customers[customer_id]
+ 
+ 
++def lock_customer(customer_id):
++    customer = get_customer(customer_id)
++    customer.locked = True
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+         shipment = db.shipments[invoice.shipment_id]
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+-    return round(total, 2)
++    return round(total, 2)
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:38:15
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass
+@@ -29,4 +30,4 @@
+     amount: float
+     status: str = "open"
+     issued_at: object = None
+-    paid_at: object = None
++    paid_at: object = None
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_lock_customer.py b/tests/test_lock_customer.py
+--- a/tests/test_lock_customer.py	1969-12-31 19:00:00
++++ b/tests/test_lock_customer.py	2026-11-12 04:38:35
+@@ -0,0 +1,14 @@
++import pytest
++from parcelo.customers import add_customer, lock_customer
++
++def test_lock_customer():
++    customer = add_customer("Test User")
++    assert customer.locked is False
++    
++    locked_customer = lock_customer(customer.id)
++    assert locked_customer.locked is True
++    assert customer.locked is True
++
++def test_lock_non_existent_customer():
++    with pytest.raises(KeyError):
++        lock_customer("non-existent-id")

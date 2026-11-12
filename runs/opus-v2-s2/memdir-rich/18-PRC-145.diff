@@ -1,0 +1,96 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:32:14
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: upgrade a standard customer to gold (PRC-145)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:32:18
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.upgrade_tier(customer_id)`: move a standard customer to gold (E_NOT_FOUND if unknown, E_BAD_STATE if already gold)
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:32:08
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,15 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def upgrade_tier(customer_id):
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    customer = db.customers[customer_id]
++    if customer.tier != "standard":
++        raise DomainError("E_BAD_STATE", f"{customer_id} is already {customer.tier}")
++    previous = customer.tier
++    customer.tier = "gold"
++    events.emit("customer.upgraded", customer.id, from_tier=previous, to_tier="gold")
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_upgrade_tier.py b/tests/unit/test_upgrade_tier.py
+--- a/tests/unit/test_upgrade_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_upgrade_tier.py	2026-11-12 04:32:13
+@@ -0,0 +1,43 @@
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def test_upgrade_standard_customer_to_gold():
++    c = customers.add_customer("Acme")
++    result = customers.upgrade_tier(c.id)
++    assert result is c
++    assert c.tier == "gold"
++    assert db.customers[c.id].tier == "gold"
++    evt = events.OUTBOX[-1]
++    assert evt["name"] == "customer.upgraded"
++    assert evt["entity_id"] == c.id
++    assert evt["payload"] == {"from_tier": "standard", "to_tier": "gold"}
++
++
++def test_upgrade_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        customers.upgrade_tier("nope")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++def test_upgrade_gold_customer_fails_and_leaves_it_unchanged():
++    c = customers.add_customer("Acme", tier="gold")
++    before = len(events.OUTBOX)
++    with pytest.raises(DomainError) as exc:
++        customers.upgrade_tier(c.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert c.tier == "gold"
++    assert len(events.OUTBOX) == before
++
++
++def test_upgrade_twice_fails_second_time():
++    c = customers.add_customer("Acme")
++    customers.upgrade_tier(c.id)
++    with pytest.raises(DomainError) as exc:
++        customers.upgrade_tier(c.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert len(events.OUTBOX) == 1

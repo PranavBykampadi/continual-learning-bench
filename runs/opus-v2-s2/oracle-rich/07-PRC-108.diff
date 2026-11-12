@@ -1,0 +1,105 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:14:18
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: add outstanding balances by customer report (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:14:23
+@@ -1,5 +1,7 @@
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +24,24 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer():
++    """Map each customer id to the Money total of that customer's open invoices.
++
++    Only invoices with status "open" count; paid and void invoices are
++    excluded. Customers without any open invoice are not in the result.
++    """
++    totals = {}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None:
++            raise DomainError(
++                "E_NOT_FOUND",
++                f"shipment {invoice.shipment_id} for invoice {invoice.id}",
++            )
++        current = totals.get(shipment.customer_id, Money.zero())
++        totals[shipment.customer_id] = current + Money.parse(invoice.amount)
++    return totals
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_outstanding.py b/tests/unit/test_reports_outstanding.py
+--- a/tests/unit/test_reports_outstanding.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_outstanding.py	2026-11-12 04:14:29
+@@ -0,0 +1,54 @@
++import pytest
++
++from parcelo import customers, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.money import Money
++from parcelo.reports import outstanding_by_customer
++from parcelo.store import db
++
++
++def _invoice(inv_id, shipment_id, amount, status="open"):
++    db.invoices[inv_id] = Invoice(
++        id=inv_id, shipment_id=shipment_id, amount=amount, status=status
++    )
++
++
++def test_empty():
++    assert outstanding_by_customer() == {}
++
++
++def test_sums_open_invoices_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    sa1 = shipments.create_shipment(a.id, 1, "local")
++    sa2 = shipments.create_shipment(a.id, 2, "local")
++    sb = shipments.create_shipment(b.id, 1, "local")
++    _invoice("i1", sa1.id, 0.1)
++    _invoice("i2", sa2.id, 0.2)
++    _invoice("i3", sb.id, 12.5)
++
++    result = outstanding_by_customer()
++
++    assert result == {a.id: Money(30), b.id: Money(1250)}
++    assert all(isinstance(v, Money) for v in result.values())
++
++
++def test_paid_and_void_excluded():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    sa = shipments.create_shipment(a.id, 1, "local")
++    sb = shipments.create_shipment(b.id, 1, "local")
++    _invoice("i1", sa.id, 10.0)
++    _invoice("i2", sa.id, 99.0, status="paid")
++    _invoice("i3", sa.id, 50.0, status="void")
++    _invoice("i4", sb.id, 7.0, status="paid")
++
++    assert outstanding_by_customer() == {a.id: Money(1000)}
++
++
++def test_missing_shipment_raises_domain_error():
++    _invoice("i1", "shp_missing", 5.0)
++    with pytest.raises(DomainError) as err:
++        outstanding_by_customer()
++    assert err.value.code == "E_NOT_FOUND"

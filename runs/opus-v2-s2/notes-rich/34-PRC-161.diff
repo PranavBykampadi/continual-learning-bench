@@ -1,0 +1,158 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:45:06
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-161] customers: add rebate_for volume rebate on paid invoices
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:45:09
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.rebate_for(customer_id)`: volume rebate earned, returns `Money` (read-only, no events); `settings.REBATE_REGULAR_RATE` of the paid invoice total at `settings.REBATE_REGULAR_MIN_SHIPMENTS`+ shipments, `settings.REBATE_BULK_RATE` at `settings.REBATE_BULK_MIN_SHIPMENTS`+, otherwise `Money.zero()`; errors `E_BAD_INPUT`, `E_UNKNOWN_CUSTOMER`
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:45:05
+@@ -1,8 +1,13 @@
+ import uuid
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
++INVOICE_STATUS_PAID = "paid"
++
+ TIERS = ("standard", "gold")
+ 
+ 
+@@ -27,3 +32,26 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate a customer has earned on their paid invoices (read-only)."""
++    if not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(customer_id))
++    if db.customers.get(customer_id) is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++
++    shipment_ids = {s.id for s in db.shipments.values() if s.customer_id == customer_id}
++    count = len(shipment_ids)
++    if count >= settings.REBATE_BULK_MIN_SHIPMENTS:
++        rate = settings.REBATE_BULK_RATE
++    elif count >= settings.REBATE_REGULAR_MIN_SHIPMENTS:
++        rate = settings.REBATE_REGULAR_RATE
++    else:
++        return Money.zero()
++
++    paid_total = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.shipment_id in shipment_ids and invoice.status == INVOICE_STATUS_PAID:
++            paid_total = paid_total + Money.parse(invoice.amount)
++    return paid_total.scale(rate)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 04:44:59
+@@ -0,0 +1,11 @@
++"""Business constants. Every value carries a comment explaining what it controls."""
++from decimal import Decimal
++
++# Minimum shipment count for the regular volume rebate (same cut-off as legacy volume_tier "regular").
++REBATE_REGULAR_MIN_SHIPMENTS = 10
++# Share of the paid invoice total rebated at the regular tier (3%).
++REBATE_REGULAR_RATE = Decimal("0.03")
++# Minimum shipment count for the bulk volume rebate (same cut-off as legacy volume_tier "bulk").
++REBATE_BULK_MIN_SHIPMENTS = 50
++# Share of the paid invoice total rebated at the bulk tier (6%).
++REBATE_BULK_RATE = Decimal("0.06")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rebate.py b/tests/unit/test_rebate.py
+--- a/tests/unit/test_rebate.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rebate.py	2026-11-12 04:45:16
+@@ -0,0 +1,76 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _seed(customer_id, n_shipments, amount=100.0, status="paid"):
++    for i in range(n_shipments):
++        s = shipments.create_shipment(customer_id, 1, "local")
++        inv_id = f"INV-{customer_id}-{i}"
++        db.invoices[inv_id] = Invoice(id=inv_id, shipment_id=s.id, amount=amount, status=status)
++
++
++def test_no_shipments_is_zero():
++    c = customers.add_customer("Acme")
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_below_threshold_is_zero():
++    c = customers.add_customer("Acme")
++    _seed(c.id, 9)
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_regular_tier_three_percent():
++    c = customers.add_customer("Acme")
++    _seed(c.id, 10)
++    assert customers.rebate_for(c.id) == Money.parse("30.00")
++
++
++def test_bulk_tier_six_percent():
++    c = customers.add_customer("Acme")
++    _seed(c.id, 50)
++    assert customers.rebate_for(c.id) == Money.parse("300.00")
++
++
++def test_only_paid_invoices_of_own_shipments_count():
++    c = customers.add_customer("Acme")
++    other = customers.add_customer("Other")
++    _seed(c.id, 10)
++    s = shipments.create_shipment(c.id, 1, "local")
++    db.invoices["open1"] = Invoice(id="open1", shipment_id=s.id, amount=500.0, status="open")
++    _seed(other.id, 10)
++    # 11 shipments, paid total 1000.00 -> 3%
++    assert customers.rebate_for(c.id) == Money.parse("30.00")
++
++
++def test_rounds_half_up_to_cents():
++    c = customers.add_customer("Acme")
++    _seed(c.id, 10, amount=0.05)  # 0.50 * 3% = 0.015 -> 0.02
++    assert customers.rebate_for(c.id) == Money(2)
++
++
++def test_read_only_emits_no_event():
++    c = customers.add_customer("Acme")
++    _seed(c.id, 10)
++    before = list(events.OUTBOX)
++    customers.rebate_for(c.id)
++    assert list(events.OUTBOX) == before
++
++
++def test_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for("nope")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++@pytest.mark.parametrize("bad", [None, "", "  ", 42])
++def test_bad_input(bad):
++    with pytest.raises(DomainError) a

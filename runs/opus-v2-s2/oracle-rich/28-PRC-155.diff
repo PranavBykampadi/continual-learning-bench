@@ -1,0 +1,88 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:27:29
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: list customers by tier (PRC-155)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:27:29
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.customers_by_tier(tier)`: customers on the given tier, sorted by id
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:27:29
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +28,11 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def customers_by_tier(tier):
++    """Return the customers on `tier`, sorted by id ascending."""
++    if tier not in TIERS:
++        raise DomainError("E_BAD_TIER", f"unknown tier {tier!r}")
++    matches = [c for c in db.customers.values() if c.tier == tier]
++    return sorted(matches, key=lambda c: c.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 04:27:29
+@@ -2,6 +2,7 @@
+     "E_NOT_FOUND",
+     "E_UNKNOWN_CUSTOMER",
+     "E_BAD_ZONE",
++    "E_BAD_TIER",
+     "E_BAD_WEIGHT",
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_by_tier.py b/tests/unit/test_customers_by_tier.py
+--- a/tests/unit/test_customers_by_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_by_tier.py	2026-11-12 04:27:29
+@@ -0,0 +1,29 @@
++import pytest
++
++from parcelo import customers
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def test_returns_only_matching_tier_sorted_by_id():
++    a = customers.add_customer("Acme", tier="gold")
++    customers.add_customer("Bolt", tier="standard")
++    b = customers.add_customer("Cargo", tier="gold")
++    # insert out of id order to check sorting, not storage order
++    items = list(db.customers.items())
++    db.customers.clear()
++    db.customers.update(reversed(items))
++    result = customers.customers_by_tier("gold")
++    assert [c.id for c in result] == sorted([a.id, b.id])
++    assert all(c.tier == "gold" for c in result)
++
++
++def test_empty_when_no_customers_on_tier():
++    customers.add_customer("Acme", tier="standard")
++    assert customers.customers_by_tier("gold") == []
++
++
++def test_unknown_tier_fails():
++    with pytest.raises(DomainError) as err:
++        customers.customers_by_tier("platinum")
++    assert err.value.code == "E_BAD_TIER"

@@ -1,0 +1,200 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:23:19
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: invoice aging report by open-invoice age (PRC-114)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:23:17
+@@ -1,5 +1,8 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +25,41 @@
+     }
+     print("summary generated")
+     return summary
++
++
++AGING_BUCKETS = ("0-30", "31-60", "60+")
++
++
++def _as_utc(moment):
++    # Legacy issue_invoice stores naive UTC datetimes; clock.now() is aware.
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
++def _aging_bucket(age_days):
++    if age_days <= 30:
++        return "0-30"
++    if age_days <= 60:
++        return "31-60"
++    return "60+"
++
++
++def aging_report():
++    """Total open-invoice amounts bucketed by whole days since issue.
++
++    Buckets: "0-30" (age <= 30), "31-60" (31..60), "60+" (> 60).
++    Paid invoices are excluded; empty buckets total Money.zero().
++    Read-only: writes no audit entry.
++    """
++    now = _as_utc(clock.now())
++    totals = {bucket: Money.zero() for bucket in AGING_BUCKETS}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        if invoice.issued_at is None:
++            raise DomainError("E_BAD_STATE", f"invoice {invoice.id!r} has no issue date")
++        age_days = (now - _as_utc(invoice.issued_at)).days
++        bucket = _aging_bucket(age_days)
++        totals[bucket] = totals[bucket] + Money.parse(invoice.amount)
++    return totals
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-12 04:23:31
+@@ -0,0 +1,131 @@
++import copy
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, reports
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++T0 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
++
++
++def _seed_customer(cid="cus_1"):
++    c = Customer(id=cid, name="Acme")
++    db.customers[cid] = c
++    return c
++
++
++def _seed_shipment(sid="shp_1", customer_id="cus_1"):
++    s = Shipment(id=sid, customer_id=customer_id, weight_kg=1.0, zone="local")
++    db.shipments[sid] = s
++    return s
++
++
++def _seed_invoice(iid, amount, days_old, status="open", shipment_id="shp_1"):
++    inv = Invoice(
++        id=iid,
++        shipment_id=shipment_id,
++        amount=amount,
++        status=status,
++        issued_at=T0 - timedelta(days=days_old),
++    )
++    db.invoices[iid] = inv
++    return inv
++
++
++def _snapshot():
++    return copy.deepcopy(db.invoices)
++
++
++def _zero_report():
++    return {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++
++
++@pytest.fixture(autouse=True)
++def _fixed_clock():
++    clock.set_fixed(T0)
++    _seed_customer()
++    _seed_shipment()
++
++
++def test_empty_store_all_buckets_zero():
++    assert reports.aging_report() == _zero_report()
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize(
++    "days_old, bucket",
++    [
++        (0, "0-30"),
++        (30, "0-30"),
++        (31, "31-60"),
++        (60, "31-60"),
++        (61, "60+"),
++        (400, "60+"),
++    ],
++)
++def test_bucket_boundaries(days_old, bucket):
++    _seed_invoice("INV-1", 10.0, days_old)
++    expected = _zero_report()
++    expected[bucket] = Money(1000)
++    assert reports.aging_report() == expected
++    assert audit.LOG == []
++
++
++def test_partial_day_counts_as_whole_days_only():
++    # 30 days 23 hours old -> 30 whole days -> still "0-30"
++    inv = _seed_invoice("INV-1", 5.0, 0)
++    inv.issued_at = T0 - timedelta(days=30, hours=23)
++    assert reports.aging_report()["0-30"] == Money(500)
++
++
++def test_totals_sum_per_bucket_and_skip_paid():
++    _seed_invoice("INV-1", 10.10, 5)
++    _seed_invoice("INV-2", 0.20, 29)
++    _seed_invoice("INV-3", 7.00, 45)
++    _seed_invoice("INV-4", 99.99, 90)
++    _seed_invoice("INV-5", 500.00, 10, status="paid")
++    _seed_invoice("INV-6", 500.00, 70, status="paid")
++    assert reports.aging_report() == {
++        "0-30": Money(1030),  # 10.10 + 0.20, exact in cents (no float drift)
++        "31-60": Money(700),
++        "60+": Money(9999),
++    }
++
++
++def test_half_cent_amount_rounds_half_up():
++    # legacy float 9.225 -> 922.5 cents -> rounds half-up to 923 cents
++    _seed_invoice("INV-1", 9.225, 1)
++    assert reports.aging_report()["0-30"] == Money(923)
++
++
++def test_naive_legacy_issued_at_treated_as_utc():
++    inv = _seed_invoice("INV-1", 3.0, 0)
++    inv.issued_at = (T0 - timedelta(days=31)).replace(tzinfo=None)
++    assert reports.aging_report()["31-60"] == Money(300)
++
++
++def test_read_only_store_and_audit_unchanged():
++    inv = _seed_invoice("INV-1", 12.5, 40)
++    paid = _seed_invoice("INV-2", 1.0, 2, status="paid")
++    before = _snapshot()
++    reports.aging_report()
++    assert db.invoices == before
++    assert db.invoices["INV-1"] is inv
++    assert db.invoices["INV-2"] is paid
++    assert inv.amount == 12.5 and inv.status == "open"
++    assert audit.LOG == []
++
++
++def test_open_invoice_without_issue_date_rejected():
++    inv = _seed_invoice("INV-1", 1.0, 0)
++    inv.issued_at = None
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        reports.aging_report()
++    assert err.value.code == "E_BAD_STATE"
++    assert db.invoices == before

@@ -1,0 +1,180 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:30:29
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: per-customer volume report (PRC-147)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:30:27
+@@ -14,6 +14,35 @@
+     return counts
+ 
+ 
++# Thresholds copied from legacy billing.volume_tier (parcelo.legacy is
++# scheduled for deletion, so it must not be imported here).
++_VOLUME_TIERS = ((50, "bulk"), (10, "regular"))
++_DEFAULT_VOLUME_TIER = "starter"
++
++
++def _volume_tier(shipment_count):
++    for threshold, label in _VOLUME_TIERS:
++        if shipment_count >= threshold:
++            return label
++    return _DEFAULT_VOLUME_TIER
++
++
++def volume_report():
++    """Return {customer_id: {"shipments": count, "tier": label}} for every customer.
++
++    Customers with no shipments are included with a count of 0. Shipments whose
++    customer is not in the store are ignored. Read-only: emits no events.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 04:30:39
+@@ -0,0 +1,126 @@
++import ast
++import copy
++import inspect
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, events, reports
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++def _seed_customer(cid):
++    c = Customer(id=cid, name=cid)
++    db.customers[cid] = c
++    return c
++
++
++def _seed_shipments(customer_id, n, status="created"):
++    for i in range(n):
++        sid = f"shp_{customer_id}_{status}_{i}"
++        db.shipments[sid] = Shipment(
++            id=sid, customer_id=customer_id, weight_kg=1.0, zone="local",
++            status=status, created_at=T0,
++        )
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++@pytest.fixture(autouse=True)
++def _fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.volume_report() == {}
++    assert events.OUTBOX == []
++
++
++def test_happy_path_counts_and_tiers():
++    for cid in ("cus_a", "cus_b", "cus_c", "cus_none"):
++        _seed_customer(cid)
++    _seed_shipments("cus_a", 3)
++    _seed_shipments("cus_b", 10)
++    _seed_shipments("cus_c", 50)
++
++    assert reports.volume_report() == {
++        "cus_a": {"shipments": 3, "tier": "starter"},
++        "cus_b": {"shipments": 10, "tier": "regular"},
++        "cus_c": {"shipments": 50, "tier": "bulk"},
++        "cus_none": {"shipments": 0, "tier": "starter"},
++    }
++
++
++@pytest.mark.parametrize(
++    "count, tier",
++    [
++        (0, "starter"),
++        (1, "starter"),
++        (9, "starter"),
++        (10, "regular"),
++        (11, "regular"),
++        (49, "regular"),
++        (50, "bulk"),
++        (51, "bulk"),
++    ],
++)
++def test_tier_boundaries(count, tier):
++    _seed_customer("cus_x")
++    _seed_shipments("cus_x", count)
++    assert reports.volume_report() == {"cus_x": {"shipments": count, "tier": tier}}
++
++
++@pytest.mark.parametrize("status", ["created", "in_transit", "delivered", "cancelled"])
++def test_counts_shipments_regardless_of_status(status):
++    _seed_customer("cus_x")
++    _seed_shipments("cus_x", 2, status=status)
++    assert reports.volume_report()["cus_x"]["shipments"] == 2
++
++
++def test_inactive_customer_included():
++    c = _seed_customer("cus_x")
++    c.active = False
++    assert reports.volume_report() == {"cus_x": {"shipments": 0, "tier": "starter"}}
++
++
++def test_orphan_shipments_ignored():
++    _seed_customer("cus_a")
++    _seed_shipments("cus_a", 1)
++    _seed_shipments("cus_ghost", 5)
++    assert reports.volume_report() == {"cus_a": {"shipments": 1, "tier": "starter"}}
++
++
++def test_read_only_no_events_and_store_unchanged():
++    a = _seed_customer("cus_a")
++    _seed_customer("cus_b")
++    _seed_shipments("cus_a", 12)
++    before = _snapshot()
++
++    reports.volume_report()
++
++    assert _snapshot() == before
++    assert db.customers["cus_a"] is a
++    assert events.OUTBOX == []
++
++
++def test_returns_fresh_dict_each_call():
++    _seed_customer("cus_a")
++    first = reports.volume_report()
++    first["cus_a"]["shipments"] = 999
++    assert reports.volume_report() == {"cus_a": {"shipments": 0, "tier": "starter"}}
++
++
++def test_does_not_import_legacy():
++    tree = ast.parse(inspect.getsource(reports))
++    for node in ast.walk(tree):
++        if isinstance(node, ast.ImportFrom):
++            assert not (node.module or "").startswith("parcelo.legacy")
++        elif isinstance(node, ast.Import):
++            assert not any(a.name.startswith("parcelo.legacy") for a in node.names)

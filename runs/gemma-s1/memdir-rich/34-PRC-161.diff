@@ -1,0 +1,30 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:37:10
+@@ -27,3 +27,26 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    if customer_id not in db.customers:
++        raise KeyError(customer_id)
++
++    shipments_count = 0
++    total_paid = 0.0
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id:
++            shipments_count += 1
++            if invoice.status == "paid":
++                total_paid += invoice.amount
++
++    if shipments_count >= 50:
++        pct = 0.06
++    elif shipments_count >= 10:
++        pct = 0.03
++    else:
++        pct = 0.0
++
++    return round(total_paid * pct, 2)

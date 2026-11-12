@@ -1,0 +1,182 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:25:52
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report for open invoices (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:25:39
+@@ -1,5 +1,7 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +24,34 @@
+     }
+     print("summary generated")
+     return summary
++
++
++AGING_BUCKETS = ("0-30", "31-60", "60+")
++
++
++def _age_in_days(issued_at, now):
++    # Same arithmetic as the old billing days_between: whole days via timedelta.days.
++    # Legacy issue_invoice stores naive UTC timestamps; clock.now() is tz-aware.
++    if issued_at.tzinfo is None:
++        issued_at = issued_at.replace(tzinfo=timezone.utc)
++    return (now - issued_at).days
++
++
++def _aging_bucket(age_days):
++    if age_days <= 30:
++        return "0-30"
++    if age_days <= 60:
++        return "31-60"
++    return "60+"
++
++
++def aging_report():
++    """Total amount of open invoices by age since issue, as Money per bucket."""
++    now = clock.now()
++    report = {bucket: Money.zero() for bucket in AGING_BUCKETS}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        bucket = _aging_bucket(_age_in_days(invoice.issued_at, now))
++        report[bucket] = report[bucket] + Money.parse(invoice.amount)
++    return report
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-12 04:25:51
+@@ -0,0 +1,120 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, invoices, reports, shipments
++from parcelo.money import Money
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_now():
++    clock.set_fixed(NOW)
++
++
++def make_invoice(amount, age_days, status="open"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    inv.amount = amount
++    inv.issued_at = NOW - timedelta(days=age_days)
++    inv.status = status
++    return inv
++
++
++def test_empty_store_all_buckets_zero():
++    assert reports.aging_report() == {
++        "0-30": Money.zero(),
++        "31-60": Money.zero(),
++        "60+": Money.zero(),
++    }
++
++
++def test_sums_open_invoices_per_bucket():
++    make_invoice(10.00, 0)
++    make_invoice(5.25, 12)
++    make_invoice(20.00, 45)
++    make_invoice(7.50, 90)
++    make_invoice(2.50, 400)
++
++    report = reports.aging_report()
++
++    assert report == {
++        "0-30": Money.parse("15.25"),
++        "31-60": Money.parse("20.00"),
++        "60+": Money.parse("10.00"),
++    }
++    assert all(isinstance(v, Money) for v in report.values())
++
++
++@pytest.mark.parametrize(
++    "age_days, bucket",
++    [(0, "0-30"), (30, "0-30"), (31, "31-60"), (60, "31-60"), (61, "60+")],
++)
++def test_bucket_boundaries(age_days, bucket):
++    make_invoice(1.00, age_days)
++
++    report = reports.aging_report()
++
++    assert report[bucket] == Money.parse("1.00")
++    assert sum(v.cents for v in report.values()) == 100
++
++
++def test_partial_days_round_down_to_whole_days():
++    inv = make_invoice(1.00, 0)
++    inv.issued_at = NOW - timedelta(days=30, hours=23, minutes=59)
++
++    assert reports.aging_report()["0-30"] == Money.parse("1.00")
++
++
++@pytest.mark.parametrize("status", ["paid", "void"])
++def test_non_open_invoices_excluded(status):
++    make_invoice(3.00, 10)
++    make_invoice(99.00, 10, status=status)
++    make_invoice(99.00, 70, status=status)
++
++    report = reports.aging_report()
++
++    assert report["0-30"] == Money.parse("3.00")
++    assert report["60+"] == Money.zero()
++
++
++def test_naive_legacy_timestamp_is_treated_as_utc():
++    inv = make_invoice(4.00, 0)
++    inv.issued_at = (NOW - timedelta(days=45)).replace(tzinfo=None)
++
++    assert reports.aging_report()["31-60"] == Money.parse("4.00")
++
++
++def test_invoice_issued_by_issue_invoice_lands_in_first_bucket():
++    clock.clear_fixed()
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++
++    report = reports.aging_report()
++
++    assert report["0-30"] == Money.parse(inv.amount)
++
++
++def test_no_float_drift():
++    for _ in range(3):
++        make_invoice(0.10, 5)
++
++    total = reports.aging_report()["0-30"]
++
++    assert total == Money.parse("0.30")
++    assert total.cents == 30
++
++
++def test_read_only():
++    inv = make_invoice(12.00, 40)
++    log_len = len(audit.LOG)
++
++    reports.aging_report()
++
++    assert inv.amount == 12.00
++    assert inv.status == "open"
++    assert inv.issued_at == NOW - timedelta(days=40)
++    assert len(audit.LOG) == log_len

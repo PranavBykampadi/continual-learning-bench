@@ -1,0 +1,163 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:36:23
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- disputes: open a dispute on an invoice (PRC-148)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:36:24
+@@ -7,6 +7,10 @@
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
++## disputes
++
++- `disputes.open_dispute(invoice_id, reason)`: open a dispute on an existing invoice
++
+ ## shipments
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/disputes.py b/parcelo/disputes.py
+--- a/parcelo/disputes.py	1969-12-31 19:00:00
++++ b/parcelo/disputes.py	2026-11-12 04:36:27
+@@ -0,0 +1,23 @@
++from parcelo import clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Dispute
++from parcelo.store import db
++
++
++def open_dispute(invoice_id, reason):
++    """Open a dispute on an existing invoice and return it."""
++    invoice = db.invoices.get(invoice_id)
++    if invoice is None:
++        raise DomainError("E_NOT_FOUND", f"invoice {invoice_id} not found")
++    if not isinstance(reason, str) or not reason.strip():
++        raise DomainError("E_BAD_INPUT", "reason must be a non-empty string")
++
++    dispute = Dispute(
++        id=ids.new_id("dsp"),
++        invoice_id=invoice.id,
++        reason=reason,
++        opened_at=clock.now(),
++    )
++    db.disputes[dispute.id] = dispute
++    events.emit("dispute.opened", dispute.id, invoice_id=invoice.id)
++    return dispute
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:36:15
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Dispute:
++    id: str
++    invoice_id: str
++    reason: str = None
++    opened_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 04:36:21
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.disputes = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.disputes.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_disputes.py b/tests/unit/test_disputes.py
+--- a/tests/unit/test_disputes.py	1969-12-31 19:00:00
++++ b/tests/unit/test_disputes.py	2026-11-12 04:36:34
+@@ -0,0 +1,76 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, events, store
++from parcelo.customers import add_customer
++from parcelo.disputes import open_dispute
++from parcelo.errors import DomainError
++from parcelo.invoices import issue_invoice
++from parcelo.models import Dispute
++from parcelo.shipments import create_shipment
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++
++
++def make_invoice():
++    cust = add_customer("Acme")
++    ship = create_shipment(cust.id, 2, "local")
++    inv = issue_invoice(ship.id)
++    events.OUTBOX.clear()
++    return inv
++
++
++def test_open_dispute_creates_and_stores():
++    clock.set_fixed(NOW)
++    inv = make_invoice()
++    d = open_dispute(inv.id, "charged twice")
++    assert isinstance(d, Dispute)
++    assert d.invoice_id == inv.id
++    assert d.reason == "charged twice"
++    assert d.opened_at == NOW
++    assert db.disputes[d.id] is d
++
++
++def test_open_dispute_emits_event():
++    inv = make_invoice()
++    d = open_dispute(inv.id, "wrong amount")
++    assert len(events.OUTBOX) == 1
++    ev = events.OUTBOX[0]
++    assert ev["name"] == "dispute.opened"
++    assert ev["entity_id"] == d.id
++    assert ev["payload"] == {"invoice_id": inv.id}
++
++
++def test_disputes_get_distinct_ids():
++    inv = make_invoice()
++    a = open_dispute(inv.id, "one")
++    b = open_dispute(inv.id, "two")
++    assert a.id != b.id
++    assert len(db.disputes) == 2
++
++
++def test_unknown_invoice_fails():
++    with pytest.raises(DomainError) as e:
++        open_dispute("INV-missing", "reason")
++    assert e.value.code == "E_NOT_FOUND"
++    assert db.disputes == {}
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("reason", ["", "   ", None, 123])
++def test_empty_reason_fails(reason):
++    inv = make_invoice()
++    with pytest.raises(DomainError) as e:
++        open_dispute(inv.id, reason)
++    assert e.value.code == "E_BAD_INPUT"
++    assert db.disputes == {}
++    assert events.OUTBOX == []
++
++
++def test_reset_clears_disputes():
++    inv = make_invoice()
++    open_dispute(inv.id, "late delivery")
++    store.reset()
++    assert db.disputes == {}

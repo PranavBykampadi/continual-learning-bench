@@ -1,0 +1,191 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:36:30
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add needs_review flag for customers with many or large open invoices (PRC-153)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:36:31
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.needs_review(customer_id)`: True if the customer has more than 3 open invoices or open total over 250.00
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:36:29
+@@ -1,6 +1,8 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +29,30 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++REVIEW_MAX_OPEN_INVOICES = 3
++REVIEW_MAX_OPEN_TOTAL = Money.parse("250.00")
++
++
++def needs_review(customer_id):
++    """True if the customer has more than 3 open invoices or more than 250.00 open.
++
++    Read-only: no events, no store changes. Invoices whose shipment is missing
++    (orphans) are ignored.
++    """
++    if not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(customer_id))
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    count = 0
++    total = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None or shipment.customer_id != customer_id:
++            continue
++        count += 1
++        total = total + Money.parse(invoice.amount)
++    return count > REVIEW_MAX_OPEN_INVOICES or REVIEW_MAX_OPEN_TOTAL < total
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_needs_review.py b/tests/unit/test_needs_review.py
+--- a/tests/unit/test_needs_review.py	1969-12-31 19:00:00
++++ b/tests/unit/test_needs_review.py	2026-11-12 04:36:49
+@@ -0,0 +1,197 @@
++import copy
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Invoice, Shipment
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def _seed_customer(cid="C1", active=True):
++    c = Customer(id=cid, name="Cust " + cid, active=active)
++    db.customers[cid] = c
++    return c
++
++
++def _seed_shipment(sid, cid):
++    s = Shipment(id=sid, customer_id=cid, weight_kg=1.0, zone="local", created_at=T0)
++    db.shipments[sid] = s
++    return s
++
++
++def _seed_invoice(iid, cid, amount, status="open", sid=None):
++    sid = sid or "shp_" + iid
++    if sid not in db.shipments:
++        _seed_shipment(sid, cid)
++    inv = Invoice(id=iid, shipment_id=sid, amount=amount, status=status, issued_at=T0)
++    db.invoices[iid] = inv
++    return inv
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        customers.needs_review(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def _check(cid, expected):
++    before = _snapshot()
++    assert customers.needs_review(cid) is expected
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++# --- happy paths -----------------------------------------------------------
++
++
++def test_no_invoices_is_false():
++    _seed_customer()
++    _check("C1", False)
++
++
++@pytest.mark.parametrize("n, expected", [(2, False), (3, False), (4, True)])
++def test_open_invoice_count_boundary(n, expected):
++    _seed_customer()
++    for i in range(n):
++        _seed_invoice(f"I{i}", "C1", 1.00)
++    _check("C1", expected)
++
++
++@pytest.mark.parametrize(
++    "amounts, expected",
++    [
++        ([249.99], False),
++        ([250.00], False),  # exactly 250.00 is not "over"
++        ([250.01], True),
++        ([100.00, 150.00], False),  # 250.00
++        ([100.00, 150.01], True),  # 250.01
++    ],
++)
++def test_open_total_boundary(amounts, expected):
++    _seed_customer()
++    for i, a in enumerate(amounts):
++        _seed_invoice(f"I{i}", "C1", a)
++    _check("C1", expected)
++
++
++def test_float_amounts_summed_exactly():
++    # 0.1 + 0.2 style float drift must not push the total over 250.00:
++    # 83.33 + 83.33 + 83.34 = 250.00 exactly in cents.
++    _seed_customer()
++    for i, a in enumerate([83.33, 83.33, 83.34]):
++        _seed_invoice(f"I{i}", "C1", a)
++    _check("C1", False)
++
++
++def test_half_cent_amount_rounds_half_up():
++    # 250.005 -> Money.parse rounds ROUND_HALF_UP to 250.01 (25001 cents) > 250.00
++    _seed_customer()
++    _seed_invoice("I1", "C1", "250.005")
++    _check("C1", True)
++
++
++@pytest.mark.parametrize("status", ["paid", "void", "OPEN", "Open", "", None])
++def test_non_open_invoices_ignored(status):
++    _seed_customer()
++    for i in range(5):
++        _seed_invoice(f"I{i}", "C1", 100.00, status=status)
++    _check("C1", False)
++
++
++def test_other_customers_invoices_ignored():
++    _seed_customer("C1")
++    _seed_customer("C2")
++    for

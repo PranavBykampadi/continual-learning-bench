@@ -1,0 +1,159 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:17:48
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add delivery addresses for customers (PRC-109)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:17:47
+@@ -1,6 +1,8 @@
+ import uuid
+ 
+-from parcelo.models import Customer
++from parcelo import audit, ids
++from parcelo.errors import DomainError
++from parcelo.models import Address, Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -18,6 +20,24 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def add_address(customer_id, line, city):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"customer {customer_id} does not exist")
++    if not isinstance(line, str) or not line.strip():
++        raise DomainError("E_BAD_INPUT", "street line must not be empty")
++    if not isinstance(city, str) or not city.strip():
++        raise DomainError("E_BAD_INPUT", "city must not be empty")
++    address = Address(
++        id=ids.new_id("adr"),
++        customer_id=customer_id,
++        line=line,
++        city=city,
++    )
++    db.addresses[address.id] = address
++    audit.record("address.added", address.id, customer_id=customer_id)
++    return address
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:17:43
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Address:
++    id: str
++    customer_id: str
++    line: str
++    city: str
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 04:17:42
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.addresses = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.addresses.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_add_address.py b/tests/unit/test_add_address.py
+--- a/tests/unit/test_add_address.py	1969-12-31 19:00:00
++++ b/tests/unit/test_add_address.py	2026-11-12 04:17:55
+@@ -0,0 +1,75 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers
++from parcelo.errors import DomainError
++from parcelo.models import Address, Customer
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++
++
++def _seed_customer(customer_id="C1"):
++    db.customers[customer_id] = Customer(id=customer_id, name="Acme")
++    return db.customers[customer_id]
++
++
++def test_add_address_creates_stores_and_audits():
++    clock.set_fixed(NOW)
++    _seed_customer("C1")
++
++    address = customers.add_address("C1", "1 Main St", "Springfield")
++
++    assert address == Address(
++        id=address.id, customer_id="C1", line="1 Main St", city="Springfield"
++    )
++    assert address.id.startswith("adr_")
++    assert db.addresses == {address.id: address}
++    assert audit.LOG == [
++        {
++            "action": "address.added",
++            "entity_id": address.id,
++            "at": NOW,
++            "details": {"customer_id": "C1"},
++        }
++    ]
++
++
++def test_multiple_addresses_get_distinct_ids():
++    _seed_customer("C1")
++    a = customers.add_address("C1", "1 Main St", "Springfield")
++    b = customers.add_address("C1", "2 Side St", "Shelbyville")
++    assert a.id != b.id
++    assert set(db.addresses) == {a.id, b.id}
++
++
++def test_unknown_customer_fails():
++    _seed_customer("C1")
++    with pytest.raises(DomainError) as err:
++        customers.add_address("nope", "1 Main St", "Springfield")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.addresses == {}
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize(
++    "line, city",
++    [
++        ("", "Springfield"),
++        ("   ", "Springfield"),
++        (None, "Springfield"),
++        ("1 Main St", ""),
++        ("1 Main St", "  "),
++        ("1 Main St", None),
++        ("", ""),
++    ],
++)
++def test_empty_line_or_city_fails(line, city):
++    customer = _seed_customer("C1")
++    with pytest.raises(DomainError) as err:
++        customers.add_address("C1", line, city)
++    assert err.value.code == "E_BAD_INPUT"
++    assert db.addresses == {}
++    assert db.customers == {"C1": customer}
++    assert audit.LOG == []

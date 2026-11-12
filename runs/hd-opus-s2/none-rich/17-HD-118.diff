@@ -1,0 +1,64 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/actions.jsonl b/actions.jsonl
+--- a/actions.jsonl	1969-12-31 19:00:00
++++ b/actions.jsonl	2026-11-12 04:19:11
+@@ -0,0 +1,5 @@
++{"n": 1, "case": "CS-4118", "action": "verify", "customer": "C-1018", "order": "MP-20118", "ok": true}
++{"n": 2, "case": "CS-4118", "action": "refund", "order": "MP-20118", "amount": 200.0}
++{"n": 3, "case": "CS-4118", "action": "credit", "customer": "C-1018", "amount": 50.0}
++{"n": 4, "case": "CS-4118", "action": "tag", "label": "damaged"}
++{"n": 5, "case": "CS-4118", "action": "close"}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/cases.json b/cases.json
+--- a/cases.json	2026-11-12 01:25:24
++++ b/cases.json	2026-11-12 04:19:11
+@@ -1 +1,9 @@
+-{}
++{
++  "CS-4118": {
++    "status": "closed",
++    "tags": [
++      "damaged"
++    ],
++    "escalated_to": []
++  }
++}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/customers.json b/customers.json
+--- a/customers.json	2026-11-12 01:25:24
++++ b/customers.json	2026-11-12 04:19:07
+@@ -141,7 +141,7 @@
+     "email": "henry.boateng@example.com",
+     "locale": "en-US",
+     "tier": "standard",
+-    "credit_balance": 0.0
++    "credit_balance": 50.0
+   },
+   {
+     "id": "C-1019",
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/orders.json b/orders.json
+--- a/orders.json	2026-11-12 01:25:24
++++ b/orders.json	2026-11-12 04:19:07
+@@ -371,7 +371,7 @@
+     ],
+     "shipping": 0.0,
+     "total": 200.0,
+-    "refunded": 0.0,
++    "refunded": 200.0,
+     "carrier": "Northline",
+     "delivered": "2026-11-02"
+   },
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/outbox/CS-4118.md b/outbox/CS-4118.md
+--- a/outbox/CS-4118.md	1969-12-31 19:00:00
++++ b/outbox/CS-4118.md	2026-11-12 04:19:10
+@@ -0,0 +1,13 @@
++Hi Henry,
++
++I'm so sorry your dining chairs arrived with a snapped leg, and that it cost you your weekend. Thank you for letting us know.
++
++Here's what I've done:
++
++- Refunded the full $200.00 for order MP-20118 to your original payment method. You should see it in your account within 5-7 business days.
++- Added $50.00 in store credit to your account for the trouble. It will apply automatically at your next checkout.
++
++You don't need to send anything back.
++
++Thanks,
++Marlowe & Pine Support

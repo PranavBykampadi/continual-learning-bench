@@ -1,0 +1,156 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:29:53
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-164] vouchers: issue goodwill vouchers (max 150.00 each)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:29:59
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## vouchers
++
++- `vouchers.issue_voucher(customer_id, amount)`: issue a goodwill voucher; amount must be greater than 0 and at most 150.00 (raises `DomainError` with `E_UNKNOWN_CUSTOMER`, `E_BAD_INPUT` or `E_LIMIT`)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:29:50
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Voucher:
++    id: str
++    customer_id: str
++    amount: float
++    issued_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 04:29:51
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.vouchers = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.vouchers.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/vouchers.py b/parcelo/vouchers.py
+--- a/parcelo/vouchers.py	1969-12-31 19:00:00
++++ b/parcelo/vouchers.py	2026-11-12 04:29:57
+@@ -0,0 +1,39 @@
++from decimal import Decimal, InvalidOperation
++
++from parcelo import clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.store import db
++
++MAX_VOUCHER_AMOUNT = Decimal("150.00")
++
++
++def _parse_amount(amount):
++    if isinstance(amount, bool) or not isinstance(amount, (int, float, Decimal, str)):
++        raise DomainError("E_BAD_INPUT", repr(amount))
++    try:
++        value = Decimal(str(amount))
++    except InvalidOperation:
++        raise DomainError("E_BAD_INPUT", repr(amount)) from None
++    if not value.is_finite():
++        raise DomainError("E_BAD_INPUT", repr(amount))
++    return value
++
++
++def issue_voucher(customer_id, amount):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    value = _parse_amount(amount)
++    if value <= 0:
++        raise DomainError("E_BAD_INPUT", f"voucher amount must be positive: {amount}")
++    if value > MAX_VOUCHER_AMOUNT:
++        raise DomainError("E_LIMIT", f"voucher amount {amount} exceeds {MAX_VOUCHER_AMOUNT}")
++    voucher = Voucher(
++        id=ids.new_id("vch"),
++        customer_id=customer_id,
++        amount=float(value),
++        issued_at=clock.now(),
++    )
++    db.vouchers[voucher.id] = voucher
++    events.emit("voucher.issued", voucher.id, customer_id=customer_id, amount=voucher.amount)
++    return voucher
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_vouchers.py b/tests/unit/test_vouchers.py
+--- a/tests/unit/test_vouchers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_vouchers.py	2026-11-12 04:30:05
+@@ -0,0 +1,56 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, store, vouchers
++from parcelo.errors import DomainError
++
++
++def test_issue_voucher_saves_and_returns():
++    moment = datetime(2026, 11, 12, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, 25.5)
++    assert v.id.startswith("vch_")
++    assert (v.customer_id, v.amount, v.issued_at) == (c.id, 25.5, moment)
++    assert store.db.vouchers[v.id] is v
++    assert events.OUTBOX[-1]["name"] == "voucher.issued"
++
++
++def test_max_amount_allowed():
++    c = customers.add_customer("Acme")
++    assert vouchers.issue_voucher(c.id, 150).amount == 150.0
++
++
++def test_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher("nope", 10)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert store.db.vouchers == {}
++
++
++@pytest.mark.parametrize(
++    "amount,code",
++    [
++        (150.01, "E_LIMIT"),
++        (1000, "E_LIMIT"),
++        (0, "E_BAD_INPUT"),
++        (-5, "E_BAD_INPUT"),
++        (float("nan"), "E_BAD_INPUT"),
++        (True, "E_BAD_INPUT"),
++        (None, "E_BAD_INPUT"),
++    ],
++)
++def test_rejected_amounts(amount, code):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher(c.id, amount)
++    assert err.value.code == code
++    assert store.db.vouchers == {}
++
++
++def test_reset_clears_vouchers():
++    c = customers.add_customer("Acme")
++    vouchers.issue_voucher(c.id, 10)
++    store.reset()
++    assert store.db.vouchers == {}

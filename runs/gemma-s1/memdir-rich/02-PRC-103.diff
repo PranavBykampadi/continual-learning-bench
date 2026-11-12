@@ -1,0 +1,21 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:13:19
+@@ -12,3 +12,17 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    # Fuel surcharge percentages from parcelo/legacy/billing.py
++    surcharges = {"local": 0.0, "national": 4.0, "international": 9.5}
++    
++    if zone not in surcharges:
++        raise ValueError("unknown zone: %s" % zone)
++        
++    amount = quote(weight_kg, zone)
++    pct = surcharges[zone]
++    surcharge_amount = round(amount * pct / 100.0, 2)
++    
++    return round(amount + surcharge_amount, 2)

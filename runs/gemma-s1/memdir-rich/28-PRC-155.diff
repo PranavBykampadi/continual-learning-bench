@@ -1,0 +1,13 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:32:25
+@@ -27,3 +27,9 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def customers_by_tier(tier):
++    if tier not in TIERS:
++        raise ValueError("bad tier")
++    return [c for c in db.customers.values() if c.tier == tier]

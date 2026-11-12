@@ -6,7 +6,7 @@ The agent works through a stream of tasks at a simulated company. After each tas
 
 It ships with two companies, a coding team and a customer support desk, on one harness. Any model that speaks the Claude CLI or an OpenAI-compatible API can run.
 
-Status: working prototype. 1,376 agent attempts across three models. Opus and Gemma have one run per arm, so read their numbers as a first measurement.
+Status: working prototype. 1,720 agent attempts across three models. Haiku and Opus have two runs per arm. Gemma has one, so read its numbers as a first measurement.
 
 ## Results in one table
 
@@ -16,21 +16,22 @@ Share of the company's rules the agent followed, over the whole stream.
 |---|---|---|---|---|
 | coding team, 40 tickets | no memory | 0.09 | 0.38 | 0.59 |
 | | notes from review | 0.76 | 0.89 | 0.91 |
-| | agent-owned memory folder | not run | 0.91 | 0.94 |
+| | agent-owned memory folder | 0.12 | 0.91 | 0.94 |
 | | told every rule | 0.84 | 0.99 | 0.99 |
-| support desk, 18 cases | no memory | not run | 0.31 | 0.24 |
-| | notes from review | not run | 0.79 | 0.83 |
-| | agent-owned memory folder | not run | 0.87 | 0.89 |
-| | told every rule | not run | 0.97 | 1.00 |
+| support desk, 18 cases | no memory | 0.06 | 0.31 | 0.26 |
+| | notes from review | 0.84 | 0.79 | 0.80 |
+| | agent-owned memory folder | 0.05 | 0.87 | 0.89 |
+| | told every rule | 1.00 | 0.97 | 1.00 |
 
-Haiku cells are the mean of two runs. Opus and Gemma cells are one run.
+Haiku and Opus cells are the mean of two runs. Gemma cells are one run.
 
 What this shows:
 
-- **A stronger model does not remove the need to learn.** With no memory, Opus follows more rules than Haiku on the coding team because it reads more of them off the existing code. On the six rules the code does not reveal, Opus scores 0.07 and Haiku 0.10. On the support desk Opus with no memory scores below Haiku.
-- **Learning from review closes most of the gap, for every model.** Notes take Gemma from 0.09 to 0.76, Haiku from 0.38 to 0.89, and Opus from 0.59 to 0.91.
+- **A stronger model does not remove the need to learn.** With no memory, Opus follows more rules than Haiku on the coding team because it reads more of them off the existing code. On the six rules the code does not reveal, Opus scores 0.08 and Haiku 0.10. On the support desk Opus with no memory scores below Haiku.
+- **Learning from review closes most of the gap, for every model.** On the coding team, notes take Gemma from 0.09 to 0.76, Haiku from 0.38 to 0.89, and Opus from 0.59 to 0.91.
 - **The same pattern holds outside code.** The support desk runs on the unchanged harness and shows the same spread from no memory to told-everything.
-- **An agent that organizes its own memory does at least as well as fixed-format notes.** The memory-folder arm beats notes in all four model and company pairs where both ran. On first-try fully correct work the gap is larger: 0.64 against 0.33 for Haiku on the support desk, 0.80 against 0.70 for Opus on the coding team.
+- **For Claude models, an agent that organizes its own memory beats fixed-format notes.** The memory-folder arm scores higher than notes for Haiku and Opus at both companies. On first-try fully correct work the gap is larger: 0.64 against 0.33 for Haiku on the support desk, 0.80 against 0.69 for Opus on the coding team.
+- **For Gemma, the memory folder does nothing.** Gemma writes accurate rules into its folder after every task and then never opens the folder on the next one. It scores 0.12 and 0.05 with the folder, against 0.76 and 0.84 when the harness puts its notes in the prompt. Storing knowledge and using it are separate skills, and the benchmark tells them apart.
 
 ## Why this benchmark
 
@@ -173,7 +174,7 @@ CLBENCH_ORG=helpdesk .venv/bin/python -m clbench.run --run-name hd --learner mem
 
 ## Detailed results
 
-Per-run tables and curves are in `results/`. The runs are `haiku-v2-s1` and `haiku-v2-s2` (11 arms each), `opus-v2` (4 arms), `gemma-s1` (3 arms), `hd-haiku-s1` and `hd-haiku-s2` (4 arms each), and `hd-opus` (4 arms).
+Per-run tables and curves are in `results/`. The runs are `haiku-v2-s1` and `haiku-v2-s2` (11 arms each), `opus-v2` and `opus-v2-s2` (4 arms each), `gemma-s1` (4 arms), `hd-haiku-s1` and `hd-haiku-s2`, `hd-opus` and `hd-opus-s2`, and `hd-gemma` (4 arms each).
 
 ### Coding team, Haiku, two runs per arm
 
@@ -201,20 +202,21 @@ Each cell is the mean of two runs with the lower and higher run in brackets.
 - **Access is not use.** With the folder only mentioned, compliance moved from 0.38 to 0.45. Told to search first, the same agent reached 0.69.
 - **The placebo arm scored below stateless in both runs.** Extra context that carries no rules did not help. Why it hurt is not established.
 
-### Coding team, Opus and Gemma, one run per arm
+### Coding team, Opus (two runs) and Gemma (one run)
 
 | model | arm | compliance | hidden-rule compliance | first-try merge | $ per ticket |
 |---|---|---|---|---|---|
-| Opus | `none` | 0.59 | 0.07 | 0.10 | 0.15 |
-| Opus | `notes` | 0.91 | 0.81 | 0.70 | 0.30 |
-| Opus | `memdir` | 0.94 | 0.88 | 0.80 | 0.52 |
-| Opus | `oracle` | 0.99 | 1.00 | 0.97 | 0.17 |
+| Opus | `none` | 0.59 [0.59, 0.59] | 0.08 [0.07, 0.09] | 0.10 [0.10, 0.10] | 0.15 |
+| Opus | `notes` | 0.91 [0.90, 0.91] | 0.79 [0.78, 0.81] | 0.69 [0.68, 0.70] | 0.30 |
+| Opus | `memdir` | 0.94 [0.94, 0.95] | 0.87 [0.86, 0.88] | 0.80 [0.80, 0.80] | 0.52 |
+| Opus | `oracle` | 0.99 [0.99, 0.99] | 1.00 [1.00, 1.00] | 0.97 [0.97, 0.97] | 0.17 |
 | Gemma 31B | `none` | 0.09 | 0.12 | 0.00 | local GPU |
 | Gemma 31B | `notes` | 0.76 | 0.76 | 0.30 | local GPU |
+| Gemma 31B | `memdir` | 0.12 | 0.14 | 0.00 | local GPU |
 | Gemma 31B | `oracle` | 0.84 | 0.88 | 0.47 | local GPU |
 
-- **Stateless Opus never followed four of the six hidden rules.** It scored 0 of 14 on `money` and 0 of 6 on each of `sorted`, `idempotent` and `settings`.
-- **Opus reads both mid-stream changes from the code.** With no memory it followed `events` on 12 of 16 tries and the new changelog format on 7 of 8. Haiku with no memory followed them on 2 of 32 and 0 of 16 across its two runs. A rule change that a frontier model cannot read off the workspace is still missing from this pack.
+- **Stateless Opus almost never follows the hidden rules.** Across two runs it scored 0 of 28 on `money`, 0 of 12 on `sorted`, 0 of 12 on `settings` and 1 of 12 on `idempotent`.
+- **Opus reads both mid-stream changes from the code.** With no memory it followed `events` on 23 of 32 tries and the new changelog format on 12 of 16. Haiku with no memory followed them on 2 of 32 and 0 of 16 across its two runs. A rule change that a frontier model cannot read off the workspace is still missing from this pack.
 - **Being told the rules is not enough for a weaker model.** Gemma with the full handbook reaches 0.84, and its functional pass rate is 0.88 in every arm.
 - **Memory costs money.** For Opus the memory-folder arm costs about three times the handbook arm per ticket, because of the extra update turn.
 
@@ -226,24 +228,28 @@ Each cell is the mean of two runs with the lower and higher run in brackets.
 | Haiku (2 runs) | `notes` | 0.79 [0.76, 0.81] | 0.78 [0.77, 0.79] | 0.33 [0.28, 0.39] |
 | Haiku (2 runs) | `memdir` | 0.87 [0.87, 0.87] | 0.90 [0.90, 0.90] | 0.64 [0.61, 0.67] |
 | Haiku (2 runs) | `oracle` | 0.97 [0.94, 1.00] | 0.98 [0.96, 1.00] | 0.92 [0.89, 0.94] |
-| Opus (1 run) | `none` | 0.24 | 0.12 | 0.00 |
-| Opus (1 run) | `notes` | 0.83 | 0.83 | 0.56 |
-| Opus (1 run) | `memdir` | 0.89 | 0.90 | 0.78 |
-| Opus (1 run) | `oracle` | 1.00 | 1.00 | 1.00 |
+| Opus (2 runs) | `none` | 0.26 [0.24, 0.28] | 0.12 [0.12, 0.13] | 0.00 [0.00, 0.00] |
+| Opus (2 runs) | `notes` | 0.80 [0.78, 0.83] | 0.79 [0.75, 0.83] | 0.47 [0.39, 0.56] |
+| Opus (2 runs) | `memdir` | 0.89 [0.89, 0.89] | 0.90 [0.90, 0.90] | 0.78 [0.78, 0.78] |
+| Opus (2 runs) | `oracle` | 1.00 [1.00, 1.00] | 1.00 [1.00, 1.00] | 1.00 [1.00, 1.00] |
+| Gemma (1 run) | `none` | 0.06 | 0.02 | 0.00 |
+| Gemma (1 run) | `notes` | 0.84 | 0.87 | 0.56 |
+| Gemma (1 run) | `memdir` | 0.05 | 0.00 | 0.00 |
+| Gemma (1 run) | `oracle` | 1.00 | 1.00 | 1.00 |
 
-- **The policy change is hidden from both models.** With no memory, Opus followed the new refund threshold on 0 of 5 cases. With notes or a memory folder it missed the first case after the change and followed the next four.
+- **The policy change is hidden from both models.** With no memory, Opus followed the new refund threshold on 0 of 10 cases across two runs. With notes or a memory folder it missed the first case after the change and followed the next four, in both runs.
 - **Stateless Opus scores below stateless Haiku here.** A capable default is still the wrong default for this company.
 
 ### What limits these numbers
 
 - No attempt in any committed run ended with a CLI or endpoint error.
-- Functional pass rate is 0.95 or higher for Haiku and Opus on the coding team, so the gaps there come from rule-following. On the support desk it is 0.94 or higher for Opus and 0.67 to 0.94 for Haiku. Most Haiku failures there are cases where the customer was owed goodwill credit and the agent gave none. Why is not established.
+- Functional pass rate is 0.95 or higher for Haiku and Opus on the coding team, so the gaps there come from rule-following. On the support desk it is 0.89 or higher for Opus and 0.67 to 0.94 for Haiku. Most Haiku failures there are cases where the customer was owed goodwill credit and the agent gave none. Why is not established.
 - The two Haiku runs differ by 0.05 or less on compliance in every arm except sparse notes (0.08). Two runs give a range, not a confidence interval.
 - Hidden rules were chosen from one stateless Opus run per company. Borderline rules moved between two such runs on the support desk: `greeting` scored 0.50 then 0.40 and `credit_cap` 0.60 then 0.40, so both sit on the line.
 
 ## Limits
 
-- **Opus and Gemma have one run per arm.** Treat differences smaller than about 0.05 as noise.
+- **Gemma has one run per arm, Haiku and Opus two.** Treat differences smaller than about 0.05 as noise.
 - **Two companies, written by a model to a design.** Rules are cleaner than a real team's taste, and the Slack history is small. A real export is thousands of times larger.
 - **The reviewer is a script.** `lenient` makes it miss things. It never gives wrong advice, and it never stays silent on an entire task.
 - **The workspace does not grow.** Every task starts from a snapshot, so the agent's own earlier work does not persist and the benchmark does not measure error build-up.

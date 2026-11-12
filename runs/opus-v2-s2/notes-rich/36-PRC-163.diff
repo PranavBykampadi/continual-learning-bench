@@ -1,0 +1,143 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 04:46:46
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-163] customers: lock a customer account
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:46:48
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.lock_customer(customer_id)`: set `locked` to True and return the `Customer` (idempotent: locking an already-locked customer returns it unchanged, no event); emits `customer.locked`; errors `E_BAD_INPUT` (missing, blank or non-string id), `E_UNKNOWN_CUSTOMER`
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:46:45
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,21 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def lock_customer(customer_id):
++    """Lock a customer account (idempotent).
++
++    Emits ``customer.locked`` only when the flag actually changes; locking an
++    already-locked customer returns it unchanged with no event.
++    """
++    if not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(customer_id))
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    customer = db.customers[customer_id]
++    if customer.locked:
++        return customer
++    customer.locked = True
++    events.emit("customer.locked", customer.id)
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:46:41
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_lock_customer.py b/tests/unit/test_lock_customer.py
+--- a/tests/unit/test_lock_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_lock_customer.py	2026-11-12 04:46:58
+@@ -0,0 +1,73 @@
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++
++def test_customer_unlocked_by_default():
++    assert Customer(id="C1", name="Acme").locked is False
++    assert customers.add_customer("Acme").locked is False
++
++
++def test_lock_sets_flag_and_returns_customer():
++    c = customers.add_customer("Acme")
++    result = customers.lock_customer(c.id)
++    assert result is c
++    assert db.customers[c.id].locked is True
++
++
++def test_lock_emits_event():
++    db.customers["C1"] = Customer(id="C1", name="Acme")
++    customers.lock_customer("C1")
++    assert events.OUTBOX[-1]["name"] == "customer.locked"
++    assert events.OUTBOX[-1]["entity_id"] == "C1"
++
++
++def test_lock_only_affects_target():
++    db.customers["C2"] = Customer(id="C2", name="B")
++    db.customers["C1"] = Customer(id="C1", name="A")
++    customers.lock_customer("C1")
++    assert db.customers["C2"].locked is False
++
++
++def test_lock_already_locked_is_noop():
++    db.customers["C1"] = Customer(id="C1", name="Acme", locked=True)
++    before = list(events.OUTBOX)
++    result = customers.lock_customer("C1")
++    assert result.locked is True
++    assert list(events.OUTBOX) == before
++
++
++def test_lock_twice_emits_once():
++    db.customers["C1"] = Customer(id="C1", name="Acme")
++    customers.lock_customer("C1")
++    customers.lock_customer("C1")
++    assert [e["name"] for e in events.OUTBOX] == ["customer.locked"]
++
++
++def test_unknown_customer():
++    before = list(events.OUTBOX)
++    with pytest.raises(DomainError) as err:
++        customers.lock_customer("nope")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert list(events.OUTBOX) == before
++
++
++@pytest.mark.parametrize("near_miss", ["c1", " C1", "C1 "])
++def test_near_miss_ids_are_unknown(near_miss):
++    db.customers["C1"] = Customer(id="C1", name="Acme")
++    with pytest.raises(DomainError) as err:
++        customers.lock_customer(near_miss)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.customers["C1"].locked is False
++
++
++@pytest.mark.parametrize("bad", [None, "", "  ", 42])
++def test_bad_input(bad):
++    before = list(events.OUTBOX)
++    with pytest.raises(DomainError) as err:
++        customers.lock_customer(bad)
++    assert err.value.code == "E_BAD_INPUT"
++    assert list(events.OUTBOX) == before

@@ -1,0 +1,12 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:39:47
+@@ -22,3 +22,8 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    invoiced_shipment_ids = {i.shipment_id for i in db.invoices.values()}
++    return [s for s in db.shipments.values() if s.id not in invoiced_shipment_ids]

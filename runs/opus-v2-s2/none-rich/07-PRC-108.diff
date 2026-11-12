@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:15:04
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: outstanding balances by customer (PRC-108)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:15:04
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,21 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def outstanding_by_customer():
++    """Map every customer id to the total of that customer's open invoices.
++
++    Paid and void invoices are excluded. Customers with nothing open map to 0.0.
++    Amounts are summed in cents so the totals don't pick up float drift.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + Money.parse(invoice.amount)
++    return {customer_id: total.cents / 100 for customer_id, total in totals.items()}
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 04:15:04
+@@ -0,0 +1,40 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def _invoice(customer_id, weight=2, zone="local"):
++    s = shipments.create_shipment(customer_id, weight, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_outstanding_by_customer_sums_only_open_invoices():
++    acme = customers.add_customer("Acme")
++    globex = customers.add_customer("Globex")
++    idle = customers.add_customer("Idle")
++
++    a1 = _invoice(acme.id)
++    a2 = _invoice(acme.id)
++    a3 = _invoice(acme.id)
++    g1 = _invoice(globex.id)
++
++    invoices.mark_paid(a2.id)
++    a3.status = "void"
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {
++        acme.id: a1.amount,
++        globex.id: g1.amount,
++        idle.id: 0.0,
++    }
++
++
++def test_outstanding_by_customer_avoids_float_drift():
++    acme = customers.add_customer("Acme")
++    for _ in range(3):
++        inv = _invoice(acme.id)
++        inv.amount = 0.1
++    assert reports.outstanding_by_customer()[acme.id] == 0.3
++
++
++def test_outstanding_by_customer_empty():
++    assert reports.outstanding_by_customer() == {}

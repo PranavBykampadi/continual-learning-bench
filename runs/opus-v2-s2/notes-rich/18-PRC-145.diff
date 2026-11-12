@@ -1,0 +1,153 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:28:43
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: upgrade a standard customer to the gold tier (PRC-145)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:28:42
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,18 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def upgrade_tier(customer_id):
++    """Promote a standard customer to the gold tier."""
++    if not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", "customer_id required")
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    if customer.tier != "standard":
++        raise DomainError("E_BAD_STATE", "only standard customers can be upgraded")
++    before = customer.tier
++    customer.tier = "gold"
++    events.emit("customer.upgraded", customer.id, before=before, after=customer.tier)
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_upgrade_tier.py b/tests/unit/test_upgrade_tier.py
+--- a/tests/unit/test_upgrade_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_upgrade_tier.py	2026-11-12 04:28:53
+@@ -0,0 +1,108 @@
++import copy
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import clock, events
++from parcelo.customers import upgrade_tier
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++def _seed_customer(cid="C1", tier="standard", name="Acme"):
++    customer = Customer(id=cid, name=name, tier=tier)
++    db.customers[cid] = customer
++    return customer
++
++
++def _snapshot():
++    return copy.deepcopy((db.customers, db.shipments, db.invoices))
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        upgrade_tier(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++@pytest.fixture(autouse=True)
++def _setup():
++    clock.set_fixed(T0)
++    _seed_customer("C1", "standard")
++    _seed_customer("C2", "standard", name="Other")
++    _seed_customer("CG", "gold", name="Goldy")
++
++
++def test_upgrades_standard_to_gold():
++    original = db.customers["C1"]
++    other_before = copy.deepcopy(db.customers["C2"])
++    gold_before = copy.deepcopy(db.customers["CG"])
++
++    result = upgrade_tier("C1")
++
++    assert result is original
++    assert db.customers["C1"] is original
++    assert original.tier == "gold"
++    assert original.name == "Acme"
++    assert original.credit_limit == 500.0
++    assert original.active is True
++    assert db.customers["C2"] == other_before
++    assert db.customers["CG"] == gold_before
++    assert events.OUTBOX == [
++        {
++            "name": "customer.upgraded",
++            "entity_id": "C1",
++            "at": T0,
++            "payload": {"before": "standard", "after": "gold"},
++        }
++    ]
++
++
++def test_successive_upgrades_use_current_clock():
++    upgrade_tier("C1")
++    t1 = T0 + timedelta(hours=1)
++    clock.set_fixed(t1)
++    upgrade_tier("C2")
++    assert events.OUTBOX == [
++        {"name": "customer.upgraded", "entity_id": "C1", "at": T0,
++         "payload": {"before": "standard", "after": "gold"}},
++        {"name": "customer.upgraded", "entity_id": "C2", "at": t1,
++         "payload": {"before": "standard", "after": "gold"}},
++    ]
++
++
++def test_already_gold_rejected():
++    _assert_rejected("E_BAD_STATE", "CG")
++
++
++def test_upgrade_twice_rejected():
++    upgrade_tier("C1")
++    events.OUTBOX.clear()
++    _assert_rejected("E_BAD_STATE", "C1")
++
++
++@pytest.mark.parametrize("tier", ["Gold", "STANDARD", "Standard", "", "platinum", None])
++def test_non_standard_tier_rejected(tier):
++    _seed_customer("CX", tier)
++    _assert_rejected("E_BAD_STATE", "CX")
++
++
++@pytest.mark.parametrize("cid", ["nope", "c1", "C1 ", "CG2"])
++def test_unknown_customer_rejected(cid):
++    _assert_rejected("E_NOT_FOUND", cid)
++
++
++def test_empty_store_rejected():
++    db.customers.clear()
++    _assert_rejected("E_NOT_FOUND", "C1")
++
++
++@pytest.mark.parametrize("cid", ["", "   ", None, 0, 1, -1, True, False, 1.5, ["C1"]])
++def test_bad_input_rejected(cid):
++    _assert_rejected("E_BAD_INPUT", cid)

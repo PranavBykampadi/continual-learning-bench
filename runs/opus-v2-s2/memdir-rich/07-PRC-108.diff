@@ -1,0 +1,127 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:19:07
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 04:19:06
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,24 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def outstanding_by_customer():
++    """Map every customer id to the total (Money) of its open invoices.
++
++    Paid and void invoices are ignored. Customers with nothing open map to
++    Money.zero(). Read-only: no audit entry, no mutation.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None:
++            continue
++        customer_id = shipment.customer_id
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + Money.parse(invoice.amount)
++    return totals
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_outstanding_by_customer.py b/tests/unit/test_outstanding_by_customer.py
+--- a/tests/unit/test_outstanding_by_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_outstanding_by_customer.py	2026-11-12 04:19:14
+@@ -0,0 +1,77 @@
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.money import Money
++
++
++def _invoice(customer, amount, status="open", zone="local"):
++    s = shipments.create_shipment(customer.id, 2, zone)
++    inv = invoices.issue_invoice(s.id)
++    inv.amount = amount
++    inv.status = status
++    return inv
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_sums_open_invoices_per_customer():
++    acme = customers.add_customer("Acme")
++    globex = customers.add_customer("Globex")
++    _invoice(acme, 10.10)
++    _invoice(acme, 20.20)
++    _invoice(globex, 5.00)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {acme.id: Money.parse("30.30"), globex.id: Money.parse("5.00")}
++
++
++def test_paid_and_void_invoices_are_excluded():
++    acme = customers.add_customer("Acme")
++    _invoice(acme, 10.00)
++    _invoice(acme, 99.00, status="paid")
++    _invoice(acme, 50.00, status="void")
++
++    assert reports.outstanding_by_customer() == {acme.id: Money.parse("10.00")}
++
++
++def test_customer_with_nothing_open_maps_to_zero():
++    acme = customers.add_customer("Acme")
++    idle = customers.add_customer("Idle")
++    _invoice(acme, 7.00, status="paid")
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {acme.id: Money.zero(), idle.id: Money.zero()}
++
++
++def test_totals_are_money_without_float_drift():
++    acme = customers.add_customer("Acme")
++    for _ in range(3):
++        _invoice(acme, 0.10)
++
++    total = reports.outstanding_by_customer()[acme.id]
++
++    assert isinstance(total, Money)
++    assert total == Money.parse("0.30")
++    assert total.cents == 30
++
++
++def test_inactive_customer_still_reported():
++    acme = customers.add_customer("Acme")
++    _invoice(acme, 12.34)
++    acme.active = False
++
++    assert reports.outstanding_by_customer() == {acme.id: Money.parse("12.34")}
++
++
++def test_is_read_only():
++    acme = customers.add_customer("Acme")
++    inv = _invoice(acme, 10.00)
++    log_len = len(audit.LOG)
++
++    reports.outstanding_by_customer()
++
++    assert inv.status == "open"
++    assert inv.amount == 10.00
++    assert len(audit.LOG) == log_len

@@ -1,0 +1,175 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 04:24:20
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- invoices: apply a credit to an open invoice (PRC-113)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 04:24:18
+@@ -1,7 +1,10 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +35,31 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    """Reduce an open invoice by a credit; return the remaining amount as Money.
++
++    The arithmetic is done in Money, but ``invoice.amount`` is stored back as a
++    float because reports and customer balances still sum it as a float.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"invoice {invoice_id} not found")
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"{invoice_id} is {invoice.status}")
++    if isinstance(amount, bool):
++        raise DomainError("E_BAD_INPUT", f"invalid credit amount {amount!r}")
++    try:
++        credit = Money.parse(amount)
++    except Exception:
++        raise DomainError("E_BAD_INPUT", f"invalid credit amount {amount!r}")
++    if credit.cents <= 0:
++        raise DomainError("E_BAD_INPUT", f"credit must be positive, got {amount!r}")
++    current = Money.parse(invoice.amount)
++    if current < credit:
++        raise DomainError("E_LIMIT", f"credit {credit} exceeds invoice amount {current}")
++    remaining = current - credit
++    invoice.amount = remaining.cents / 100
++    audit.record("invoice.credit_applied", invoice.id, amount=str(credit), remaining=str(remaining))
++    return remaining
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_apply_credit.py b/tests/unit/test_apply_credit.py
+--- a/tests/unit/test_apply_credit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_apply_credit.py	2026-11-12 04:24:32
+@@ -0,0 +1,114 @@
++import math
++
++import pytest
++
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++def _invoice(weight=2, zone="local"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, weight, zone)
++    return c, invoices.issue_invoice(s.id)
++
++
++def test_apply_credit_reduces_amount_and_returns_remaining():
++    _, inv = _invoice()  # 7.00
++    remaining = invoices.apply_credit(inv.id, "2.50")
++    assert isinstance(remaining, Money)
++    assert remaining == Money.parse("4.50")
++    assert inv.amount == 4.5
++    assert isinstance(inv.amount, float)
++    assert inv.status == "open"
++    entry = audit.LOG[-1]
++    assert entry["action"] == "invoice.credit_applied"
++    assert entry["entity_id"] == inv.id
++    assert entry["details"]["amount"] == str(Money.parse("2.50"))
++
++
++def test_accepts_money_and_numbers():
++    _, inv = _invoice()
++    assert invoices.apply_credit(inv.id, Money.parse("1.00")) == Money.parse("6.00")
++    assert invoices.apply_credit(inv.id, 1) == Money.parse("5.00")
++
++
++def test_repeated_credits_have_no_float_drift():
++    _, inv = _invoice()
++    for _ in range(3):
++        remaining = invoices.apply_credit(inv.id, 0.10)
++    assert remaining == Money.parse("6.70")
++    assert remaining.cents == 670
++    assert inv.amount == 6.7
++
++
++def test_full_credit_leaves_zero():
++    _, inv = _invoice()
++    assert invoices.apply_credit(inv.id, "7.00") == Money.zero()
++    assert inv.amount == 0.0
++
++
++def test_customer_balance_and_reports_still_work_after_credit():
++    c, inv = _invoice()
++    invoices.apply_credit(inv.id, "2.00")
++    assert customers.outstanding_balance(c.id) == 5.0
++    assert inv in invoices.open_invoices()
++    invoices.mark_paid(inv.id)
++    assert reports.revenue_total() == 5.0
++    assert reports.daily_summary()["revenue"] == 5.0
++
++
++def test_unknown_invoice():
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit("INV-missing", "1.00")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize("status", ["paid", "void"])
++def test_invoice_not_open(status):
++    _, inv = _invoice()
++    inv.status = status
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, "1.00")
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.amount == 7.0
++    assert len(audit.LOG) == before
++
++
++def test_credit_larger_than_amount():
++    _, inv = _invoice()
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, "7.01")
++    assert err.value.code == "E_LIMIT"
++    assert inv.amount == 7.0
++    assert len(audit.LOG) == before
++
++
++@pytest.mark.parametrize(
++    "amount", [0, -1, "0.00", 0.001, True, None, "", "abc", math.nan]
++)
++def test_bad_amounts(amount):
++    _, inv = _invoice()
++    before = len(audit.LOG)
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert inv.amount == 7.0
++    assert len(audit.LOG) == before
++
++
++def test_bad_state_checked_before_amount():
++    _, inv = _invoice()
++    inv.status = "paid"
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, "abc")
++    assert err.value.code == "E_BAD_STATE"
++
++
++def test_other_invoices_unaffected():
++    _, inv = _invoice()
++    _, other = _invoice()
++    invoices.apply_credit(inv.id, "1.00")
++    assert other.amount == 7.0

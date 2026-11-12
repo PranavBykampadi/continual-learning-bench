@@ -1,0 +1,186 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:33:24
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add set_credit_limit (PRC-150)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:33:24
+@@ -1,5 +1,10 @@
++import math
+ import uuid
++from decimal import Decimal
+ 
++from parcelo import events
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +32,36 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def set_credit_limit(customer_id, amount):
++    """Set a customer's credit limit and return the new limit.
++
++    ``amount`` is a dollar value (int, float or Decimal) >= 0; it is rounded to
++    whole cents with ROUND_HALF_UP. Emits ``customer.credit_limit_set``.
++
++    Raises DomainError:
++      E_NOT_FOUND - customer_id is not a str or no such customer exists.
++      E_BAD_INPUT - amount is not a finite, non-negative number.
++    """
++    if not isinstance(customer_id, str) or customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", f"customer {customer_id!r} not found")
++    customer = db.customers[customer_id]
++
++    if isinstance(amount, bool) or not isinstance(amount, (int, float, Decimal)):
++        raise DomainError("E_BAD_INPUT", "amount must be a number")
++    if isinstance(amount, (float, Decimal)) and not math.isfinite(amount):
++        raise DomainError("E_BAD_INPUT", "amount must be finite")
++    if amount < 0:
++        raise DomainError("E_BAD_INPUT", "amount must not be negative")
++
++    new_limit = Money.parse(amount).cents / 100
++    old_limit = customer.credit_limit
++    customer.credit_limit = new_limit
++    events.emit(
++        "customer.credit_limit_set",
++        customer.id,
++        old_limit=old_limit,
++        new_limit=new_limit,
++    )
++    return new_limit
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_set_credit_limit.py b/tests/unit/test_set_credit_limit.py
+--- a/tests/unit/test_set_credit_limit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_set_credit_limit.py	2026-11-12 04:33:38
+@@ -0,0 +1,121 @@
++import copy
++from datetime import datetime, timedelta, timezone
++from decimal import Decimal
++
++import pytest
++
++from parcelo import clock, events
++from parcelo.customers import set_credit_limit
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++T0 = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def fixed_clock():
++    clock.set_fixed(T0)
++    yield
++    clock.clear_fixed()
++
++
++def _seed_customer(cid="C1", **kw):
++    kw.setdefault("name", "Acme")
++    c = Customer(id=cid, **kw)
++    db.customers[cid] = c
++    return c
++
++
++def _snapshot():
++    return copy.deepcopy(
++        {"customers": db.customers, "shipments": db.shipments, "invoices": db.invoices}
++    )
++
++
++def _assert_rejected(code, *args):
++    before = _snapshot()
++    with pytest.raises(DomainError) as err:
++        set_credit_limit(*args)
++    assert err.value.code == code
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_happy_path_updates_returns_and_emits():
++    c = _seed_customer(tier="gold", credit_limit=250.0, active=True)
++    other = _seed_customer("C2", name="Other", credit_limit=100.0)
++
++    assert set_credit_limit("C1", 1200) == 1200.0
++
++    assert db.customers["C1"] is c
++    assert c.credit_limit == 1200.0
++    assert (c.name, c.tier, c.active) == ("Acme", "gold", True)
++    assert other.credit_limit == 100.0
++    assert len(db.customers) == 2
++    assert events.OUTBOX == [
++        {
++            "name": "customer.credit_limit_set",
++            "entity_id": "C1",
++            "at": T0,
++            "payload": {"old_limit": 250.0, "new_limit": 1200.0},
++        }
++    ]
++
++
++def test_zero_is_allowed():
++    c = _seed_customer()
++    assert set_credit_limit("C1", 0) == 0.0
++    assert c.credit_limit == 0.0
++
++
++def test_half_cent_rounds_half_up():
++    c = _seed_customer()
++    # 9.225 dollars = 922.5 cents -> ROUND_HALF_UP -> 923 cents = 9.23
++    assert set_credit_limit("C1", 9.225) == 9.23
++    assert Decimal(str(c.credit_limit)) == Decimal("9.23")
++
++
++def test_decimal_amount_accepted():
++    _seed_customer()
++    assert set_credit_limit("C1", Decimal("10.10")) == 10.10
++
++
++def test_float_sum_amount():
++    _seed_customer()
++    # 0.1 + 0.2 == 0.30000000000000004 -> 30 cents
++    assert Decimal(str(set_credit_limit("C1", 0.1 + 0.2))) == Decimal("0.3")
++
++
++def test_repeat_calls_emit_in_order_with_distinct_times():
++    _seed_customer()
++    set_credit_limit("C1", 100)
++    t1 = T0 + timedelta(minutes=5)
++    clock.set_fixed(t1)
++    set_credit_limit("C1", 300)
++    assert events.OUTBOX == [
++        {"name": "customer.credit_limit_set", "entity_id": "C1", "at": T0,
++         "payload": {"old_limit": 500.0, "new_limit": 100.0}},
++        {"name": "customer.credit_limit_set", "entity_id": "C1", "at": t1,
++         "payload": {"old_limit": 100.0, "new_limit": 300.0}},
++    ]
++
++
++@pytest.mark.parametrize("cid", ["missing", "c1", "", " ", None, 1, True, ["C1"]])
++def test_unknown_customer(cid):
++    _seed_customer()
++    _assert_rejected("E_NOT_FOUND", cid, 100)
++
++
++def test_empty_store():
++    _assert_rejected("E_NOT_FOUND", "C1", 100)
++
++
++@pytest.mark.parametrize(
++    "amount",
++    [-1, -0.01, Decimal("-5"), "", " ", "100", None, True, False,
++     float("nan"), float("inf"), float("-inf"), Decimal("NaN"), [100], T0.replace(tzinfo=None)],
++)
++def test_bad_amount(amount):
++

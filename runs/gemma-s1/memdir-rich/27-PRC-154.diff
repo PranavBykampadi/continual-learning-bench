@@ -1,0 +1,16 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:31:54
+@@ -20,6 +20,12 @@
+     return db.customers[customer_id]
+ 
+ 
++def reactivate_customer(customer_id):
++    customer = get_customer(customer_id)
++    customer.active = True
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():

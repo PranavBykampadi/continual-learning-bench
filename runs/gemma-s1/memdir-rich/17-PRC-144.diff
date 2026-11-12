@@ -1,0 +1,21 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:24:43
+@@ -12,3 +12,16 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value, zone):
++    if declared_value <= 0:
++        raise ValueError("declared value must be positive")
++    
++    surcharges = {"local": 0.0, "national": 4.0, "international": 9.5}
++    if zone not in surcharges:
++        raise ValueError("unknown zone: %s" % zone)
++    
++    pct = surcharges[zone]
++    fee = (declared_value * 0.02) + (declared_value * pct / 100.0)
++    return max(1.0, round(fee, 2))
+\ No newline at end of file

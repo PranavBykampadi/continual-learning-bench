@@ -1,0 +1,69 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:26:27
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- rates: add heavy_quote surcharge for parcels over 30 kg (PRC-156)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:26:27
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: quote plus 0.75 per kg above 30 kg
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:26:27
+@@ -12,3 +12,18 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG = 0.75
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus HEAVY_PER_KG for each kg above HEAVY_THRESHOLD_KG.
++
++    Weight above the threshold is charged pro rata (e.g. 30.5 kg adds 0.375).
++    Raises ValueError for an unknown zone or a non-positive weight.
++    """
++    price = quote(weight_kg, zone)
++    excess = max(0, weight_kg - HEAVY_THRESHOLD_KG)
++    return round(price + HEAVY_PER_KG * excess, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 04:26:27
+@@ -10,3 +10,24 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_heavy_quote_at_or_below_threshold_is_normal_quote():
++    assert rates.heavy_quote(2, "local") == rates.quote(2, "local")
++    assert rates.heavy_quote(30, "national") == rates.quote(30, "national")
++
++
++def test_heavy_quote_adds_surcharge_above_threshold():
++    # 9.0 + 1.25*40 = 59.0, plus 0.75*10 = 7.5
++    assert rates.heavy_quote(40, "national") == 66.5
++
++
++def test_heavy_quote_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.heavy_quote(40, "moon")
++
++
++@pytest.mark.parametrize("weight", [0, -5])
++def test_heavy_quote_non_positive_weight(weight):
++    with pytest.raises(ValueError):
++        rates.heavy_quote(weight, "local")

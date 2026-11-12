@@ -1,0 +1,20 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 04:32:50
+@@ -12,3 +12,15 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def heavy_quote(weight_kg, zone):
++    if weight_kg <= 0:
++        raise ValueError("weight must be positive")
++    
++    cost = quote(weight_kg, zone)
++    if weight_kg > 30:
++        extra_weight = weight_kg - 30
++        cost += extra_weight * 0.75
++    
++    return round(cost, 2)
+\ No newline at end of file

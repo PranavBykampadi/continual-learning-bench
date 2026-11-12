@@ -1,0 +1,102 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:28:42
+@@ -1,11 +1,17 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import volume_tier
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+ 
++# Rebate share of paid invoice totals, keyed by legacy volume tier.
++REBATE_RATES = {"starter": "0", "regular": "0.03", "bulk": "0.06"}
+ 
++
+ def add_customer(name, tier="standard"):
+     if tier not in TIERS:
+         raise ValueError("bad tier")
+@@ -27,3 +33,22 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned by a customer, in dollars.
++
++    3% of the customer's paid invoice total once they have 10+ shipments,
++    6% at 50+, otherwise zero. Raises DomainError for unknown customers.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    shipment_ids = {
++        s.id for s in db.shipments.values() if s.customer_id == customer_id
++    }
++    rate = REBATE_RATES[volume_tier(len(shipment_ids))]
++    paid = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.shipment_id in shipment_ids and invoice.status == "paid":
++            paid = paid + Money.parse(invoice.amount)
++    return paid.scale(rate).cents / 100
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers.py b/tests/test_customers.py
+--- a/tests/test_customers.py	1969-12-31 19:00:00
++++ b/tests/test_customers.py	2026-11-12 04:28:47
+@@ -0,0 +1,54 @@
++import pytest
++
++from parcelo.customers import add_customer, rebate_for
++from parcelo.errors import DomainError
++from parcelo.invoices import issue_invoice, mark_paid
++from parcelo.shipments import create_shipment
++from parcelo.store import db
++
++
++def _ship(customer_id, n, pay=0):
++    for i in range(n):
++        invoice = issue_invoice(create_shipment(customer_id, 2.0, "local").id)
++        if i < pay:
++            mark_paid(invoice.id)
++
++
++def _paid_total(customer_id):
++    return sum(
++        i.amount
++        for i in db.invoices.values()
++        if i.status == "paid" and db.shipments[i.shipment_id].customer_id == customer_id
++    )
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        rebate_for("nope")
++    assert exc.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_below_ten_shipments_is_zero():
++    c = add_customer("A")
++    _ship(c.id, 9, pay=9)
++    assert rebate_for(c.id) == 0
++
++
++def test_ten_shipments_three_percent_of_paid_only():
++    c = add_customer("A")
++    _ship(c.id, 10, pay=4)
++    assert rebate_for(c.id) == pytest.approx(round(_paid_total(c.id) * 0.03, 2))
++
++
++def test_fifty_shipments_six_percent():
++    c = add_customer("A")
++    _ship(c.id, 50, pay=50)
++    assert rebate_for(c.id) == pytest.approx(round(_paid_total(c.id) * 0.06, 2))
++
++
++def test_other_customers_not_counted():
++    a, b = add_customer("A"), add_customer("B")
++    _ship(a.id, 10, pay=10)
++    _ship(b.id, 5, pay=5)
++    assert rebate_for(b.id) == 0
++    assert rebate_for(a.id) == pytest.approx(round(_paid_total(a.id) * 0.03, 2))

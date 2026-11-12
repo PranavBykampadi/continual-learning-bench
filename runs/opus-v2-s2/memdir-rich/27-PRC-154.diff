@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 04:46:00
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: reactivate a customer (PRC-154)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 04:45:59
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.reactivate_customer(customer_id)`: switch a customer back on (idempotent: already-active returns the customer unchanged)
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 04:45:52
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,19 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def reactivate_customer(customer_id):
++    """Switch a customer back on and return it.
++
++    Unknown id -> DomainError E_NOT_FOUND. Idempotent: an already-active
++    customer is returned unchanged, with no second event.
++    """
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    if customer.active:
++        return customer
++    customer.active = True
++    events.emit("customer.reactivated", customer.id)
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reactivate_customer.py b/tests/unit/test_reactivate_customer.py
+--- a/tests/unit/test_reactivate_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reactivate_customer.py	2026-11-12 04:45:58
+@@ -0,0 +1,77 @@
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def make_inactive_customer():
++    customer = customers.add_customer("Acme")
++    customer.active = False
++    events.OUTBOX.clear()
++    return customer
++
++
++def test_reactivate_sets_active_and_returns_customer():
++    customer = make_inactive_customer()
++
++    result = customers.reactivate_customer(customer.id)
++
++    assert result is customer
++    assert customer.active is True
++    assert db.customers[customer.id].active is True
++
++
++def test_reactivate_emits_event():
++    customer = make_inactive_customer()
++
++    customers.reactivate_customer(customer.id)
++
++    assert len(events.OUTBOX) == 1
++    event = events.OUTBOX[-1]
++    assert event["name"] == "customer.reactivated"
++    assert event["entity_id"] == customer.id
++    assert event["payload"] == {}
++
++
++def test_reactivate_twice_is_idempotent():
++    customer = make_inactive_customer()
++
++    first = customers.reactivate_customer(customer.id)
++    second = customers.reactivate_customer(customer.id)
++
++    assert first is second is customer
++    assert customer.active is True
++    assert len(events.OUTBOX) == 1
++
++
++def test_reactivate_already_active_customer_returns_unchanged():
++    customer = customers.add_customer("Acme", tier="gold")
++    events.OUTBOX.clear()
++
++    result = customers.reactivate_customer(customer.id)
++
++    assert result is customer
++    assert customer.active is True
++    assert customer.tier == "gold"
++    assert events.OUTBOX == []
++
++
++def test_reactivate_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.reactivate_customer("C-missing")
++
++    assert err.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++    assert db.customers == {}
++
++
++def test_reactivate_only_touches_given_customer():
++    target = make_inactive_customer()
++    other = customers.add_customer("Other")
++    other.active = False
++
++    customers.reactivate_customer(target.id)
++
++    assert target.active is True
++    assert other.active is False

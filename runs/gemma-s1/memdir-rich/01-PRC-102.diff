@@ -1,0 +1,30 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 04:12:22
+@@ -30,5 +30,18 @@
+     return invoice
+ 
+ 
++def void_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "paid":
++        raise ValueError("cannot void paid invoice")
++    if invoice.status == "void":
++        raise ValueError("already voided")
++    invoice.status = "void"
++    invoice.voided_at = datetime.now()
++    return invoice
++
++
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 04:11:52
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    voided_at: object = None
