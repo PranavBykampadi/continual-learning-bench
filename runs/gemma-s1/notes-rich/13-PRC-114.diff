@@ -1,0 +1,105 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:04:47
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: add aging report (PRC-114)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:34:25
++++ b/parcelo/reports.py	2026-11-11 18:04:07
+@@ -1,5 +1,7 @@
+ from datetime import datetime
+ 
++from parcelo.clock import now
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -16,9 +18,34 @@
+ 
+ def daily_summary():
+     summary = {
+-        "generated_at": datetime.now(),
++        "generated_at": now(),
+         "shipments": len(db.shipments),
+         "revenue": revenue_total(),
+     }
+     print("summary generated")
+     return summary
++
++
++def aging_report():
++    today = now()
++    buckets = {
++        "0-30": Money.zero(),
++        "31-60": Money.zero(),
++        "60+": Money.zero(),
++    }
++
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++
++        age = (today - invoice.issued_at).days
++        amount = Money.parse(invoice.amount)
++
++        if age <= 30:
++            buckets["0-30"] += amount
++        elif age <= 60:
++            buckets["31-60"] += amount
++        else:
++            buckets["60+"] += amount
++
++    return buckets
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-11 18:04:40
+@@ -0,0 +1,43 @@
++import pytest
++from datetime import datetime, timezone, timedelta
++from parcelo.clock import set_fixed
++from parcelo.money import Money
++from parcelo.store import db
++from parcelo.reports import aging_report
++
++def test_aging_report():
++    set_fixed(datetime(2023, 10, 1, tzinfo=timezone.utc))
++    
++    # Clear invoices for isolation
++    db.invoices.clear()
++    
++    # Mock Invoice class as it's not fully defined in the provided snippet but used in reports
++    from collections import namedtuple
++    Invoice = namedtuple("Invoice", ["id", "amount", "status", "issued_at"])
++
++    # 0-30 days
++    db.invoices["INV-1"] = Invoice("INV-1", 100.0, "open", datetime(2023, 9, 25, tzinfo=timezone.utc)) # 6 days
++    db.invoices["INV-2"] = Invoice("INV-2", 50.0, "open", datetime(2023, 9, 1, tzinfo=timezone.utc))   # 30 days
++    
++    # 31-60 days
++    db.invoices["INV-3"] = Invoice("INV-3", 200.0, "open", datetime(2023, 8, 30, tzinfo=timezone.utc)) # 32 days
++    db.invoices["INV-4"] = Invoice("INV-4", 100.0, "open", datetime(2023, 8, 2, tzinfo=timezone.utc))   # 60 days
++    
++    # 60+ days
++    db.invoices["INV-5"] = Invoice("INV-5", 300.0, "open", datetime(2023, 7, 31, tzinfo=timezone.utc)) # 62 days
++    
++    # Should be ignored (paid)
++    db.invoices["INV-6"] = Invoice("INV-6", 1000.0, "paid", datetime(2023, 9, 1, tzinfo=timezone.utc))
++    
++    report = aging_report()
++    
++    assert report["0-30"] == Money.parse(150.0)
++    assert report["31-60"] == Money.parse(300.0)
++    assert report["60+"] == Money.parse(300.0)
++
++def test_aging_report_empty():
++    db.invoices.clear()
++    report = aging_report()
++    assert report["0-30"] == Money.zero()
++    assert report["31-60"] == Money.zero()
++    assert report["60+"] == Money.zero()

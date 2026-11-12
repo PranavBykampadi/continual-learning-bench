@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:08:34
+@@ -1,12 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- platform: add events outbox (PRC-140)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: add volume_report for per-customer shipment counts and tiers (PRC-147)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:34:25
++++ b/parcelo/reports.py	2026-11-11 18:08:02
+@@ -22,3 +22,30 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def volume_report():
++    def get_tier(count):
++        if count >= 50:
++            return "bulk"
++        if count >= 10:
++            return "regular"
++        return "starter"
++
++    report = {}
++    # Initialize all customers with 0 shipments
++    for customer_id in db.customers:
++        report[customer_id] = {"shipments": 0, "tier": "starter"}
++
++    # Count shipments per customer
++    for shipment in db.shipments.values():
++        cid = shipment.customer_id
++        if cid in report:
++            report[cid]["shipments"] += 1
++
++    # Update tiers based on final counts
++    for cid in report:
++        count = report[cid]["shipments"]
++        report[cid]["tier"] = get_tier(count)
++
++    return report
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-11 18:08:31
+@@ -0,0 +1,56 @@
++from parcelo.store import db, reset
++from parcelo.customers import add_customer
++from parcelo.shipments import create_shipment
++from parcelo.reports import volume_report
++
++def test_volume_report_empty():
++    reset()
++    assert volume_report() == {}
++
++def test_volume_report_no_shipments():
++    reset()
++    add_customer("Alice")
++    add_customer("Bob")
++    
++    report = volume_report()
++    assert len(report) == 2
++    for cid in report:
++        assert report[cid] == {"shipments": 0, "tier": "starter"}
++
++def test_volume_report_tiers():
++    reset()
++    c1 = add_customer("Starter") # 0-9
++    c2 = add_customer("Regular") # 10-49
++    c3 = add_customer("Bulk")    # 50+
++    
++    # C1: 5 shipments (starter)
++    for _ in range(5):
++        create_shipment(c1.id, 1, "local")
++    
++    # C2: 15 shipments (regular)
++    for _ in range(15):
++        create_shipment(c2.id, 1, "local")
++        
++    # C3: 55 shipments (bulk)
++    for _ in range(55):
++        create_shipment(c3.id, 1, "local")
++        
++    report = volume_report()
++    
++    assert report[c1.id] == {"shipments": 5, "tier": "starter"}
++    assert report[c2.id] == {"shipments": 15, "tier": "regular"}
++    assert report[c3.id] == {"shipments": 55, "tier": "bulk"}
++
++def test_volume_report_thresholds():
++    reset()
++    c_reg = add_customer("Reg")
++    c_bulk = add_customer("Bulk")
++    
++    for _ in range(10):
++        create_shipment(c_reg.id, 1, "local")
++    for _ in range(50):
++        create_shipment(c_bulk.id, 1, "local")
++        
++    report = volume_report()
++    assert report[c_reg.id]["tier"] == "regular"
++    assert report[c_bulk.id]["tier"] == "bulk"

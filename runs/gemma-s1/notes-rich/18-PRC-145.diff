@@ -1,0 +1,108 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:12:01
+@@ -1,12 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- platform: add events outbox (PRC-140)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- customers: add upgrade_tier (PRC-145)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:34:25
++++ b/parcelo/customers.py	2026-11-11 18:11:44
+@@ -2,6 +2,8 @@
+ 
+ from parcelo.models import Customer
+ from parcelo.store import db
++from parcelo.errors import DomainError
++from parcelo.events import emit
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -18,6 +20,19 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    customer = db.customers.get(customer_id)
++    if not customer:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"Customer {customer_id} not found")
++    
++    if customer.tier == "gold":
++        raise DomainError("E_ALREADY_GOLD", f"Customer {customer_id} is already gold")
++    
++    customer.tier = "gold"
++    emit("customer_upgraded", customer_id, tier="gold")
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+@@ -26,4 +41,4 @@
+         shipment = db.shipments[invoice.shipment_id]
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+-    return round(total, 2)
++    return round(total, 2)
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 18:11:26
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_ALREADY_GOLD",
+ }
+ 
+ 
+@@ -15,4 +16,4 @@
+             raise RuntimeError(f"unregistered error code {code}")
+         super().__init__(f"{code}: {message}")
+         self.code = code
+-        self.message = message
++        self.message = message
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-11 18:11:58
+@@ -0,0 +1,30 @@
++import pytest
++from parcelo.customers import add_customer, upgrade_tier
++from parcelo.store import db, reset
++from parcelo.errors import DomainError
++
++@pytest.fixture(autouse=True)
++def clear_db():
++    reset()
++
++def test_upgrade_tier_success():
++    customer = add_customer("Alice")
++    assert customer.tier == "standard"
++    
++    upgraded = upgrade_tier(customer.id)
++    
++    assert upgraded.id == customer.id
++    assert upgraded.tier == "gold"
++    assert db.customers[customer.id].tier == "gold"
++
++def test_upgrade_tier_not_found():
++    with pytest.raises(DomainError) as exc:
++        upgrade_tier("non-existent")
++    assert exc.value.code == "E_UNKNOWN_CUSTOMER"
++
++def test_upgrade_tier_already_gold():
++    customer = add_customer("Bob", tier="gold")
++    
++    with pytest.raises(DomainError) as exc:
++        upgrade_tier(customer.id)
++    assert exc.value.code == "E_ALREADY_GOLD"

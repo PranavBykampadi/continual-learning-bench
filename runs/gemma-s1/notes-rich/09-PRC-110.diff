@@ -1,0 +1,96 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:52:01
+@@ -2,10 +2,11 @@
+ 
+ ## Unreleased
+ 
++- rates: add gold tier discount on quotes (PRC-110)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-11 17:34:25
++++ b/parcelo/rates.py	2026-11-11 17:51:32
+@@ -1,14 +1,41 @@
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+-        raise ValueError("unknown zone: %s" % zone)
++        raise DomainError("E_BAD_ZONE", f"unknown zone: {zone}")
+     return ZONE_BASE[zone]
+ 
+ 
+ def quote(weight_kg, zone):
+     if weight_kg <= 0:
+-        raise ValueError("weight must be positive")
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    if tier not in ("gold", "standard"):
++        raise DomainError("E_BAD_INPUT", f"unknown tier: {tier}")
++
++    amount = quote(weight_kg, zone)
++    
++    if tier == "gold":
++        # Use Money to ensure consistent rounding with legacy billing logic
++        # legacy.apply_discount: round(amount * (1 - pct / 100.0), 2)
++        # Money.scale uses ROUND_HALF_UP which is typical for financial rounding.
++        # However, the ticket says "Round the result the same way the existing discount logic does"
++        # and points to apply_discount. python's round() uses round-to-even.
++        # Let's check the failed test: 5.75 * 0.9 = 5.175. 
++        # round(5.175, 2) in Python 3 is 5.18? No, it's 5.18 if it's exactly .175? 
++        # Actually round(5.175, 2) -> 5.18. Wait, 5.175 is exactly halfway between 5.17 and 5.18.
++        # Python 3 round() rounds to nearest even. 8 is even, 7 is odd. So 5.18.
++        # Why did the test fail with 5.17?
++        # Because 5.75 * 0.9 is actually 5.174999999999999.
++        # To match the legacy logic exactly, we should use the same float math.
++        return round(amount * 0.9, 2)
++    
++    return amount
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rates.py b/tests/unit/test_rates.py
+--- a/tests/unit/test_rates.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rates.py	2026-11-11 17:51:54
+@@ -0,0 +1,28 @@
++from parcelo.rates import quote, discounted_quote
++from parcelo.errors import DomainError
++import pytest
++
++def test_discounted_quote_standard():
++    # weight 1kg, local zone: 4.5 + 1.25*1 = 5.75
++    assert discounted_quote(1, "local", "standard") == 5.75
++
++def test_discounted_quote_gold():
++    # weight 1kg, local zone: 5.75 * 0.9 = 5.175
++    # Python 3 float math: 5.75 * 0.9 is 5.174999999999999
++    # round(5.174999999999999, 2) -> 5.17
++    assert discounted_quote(1, "local", "gold") == 5.17
++
++def test_discounted_quote_invalid_tier():
++    with pytest.raises(DomainError) as excinfo:
++        discounted_quote(1, "local", "platinum")
++    assert excinfo.value.code == "E_BAD_INPUT"
++
++def test_discounted_quote_invalid_zone():
++    with pytest.raises(DomainError) as excinfo:
++        discounted_quote(1, "mars", "gold")
++    assert excinfo.value.code == "E_BAD_ZONE"
++
++def test_discounted_quote_invalid_weight():
++    with pytest.raises(DomainError) as excinfo:
++        discounted_quote(-1, "local", "gold")
++    assert excinfo.value.code == "E_BAD_WEIGHT"

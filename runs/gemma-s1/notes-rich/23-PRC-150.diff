@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:20:26
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add set_credit_limit (PRC-150)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:34:25
++++ b/parcelo/customers.py	2026-11-11 18:20:01
+@@ -2,6 +2,9 @@
+ 
+ from parcelo.models import Customer
+ from parcelo.store import db
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.events import emit
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -27,3 +30,18 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def set_credit_limit(customer_id, amount):
++    customer = db.customers.get(customer_id)
++    if not customer:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"Customer {customer_id} not found")
++
++    money_amount = Money.parse(amount)
++    if money_amount.cents < 0:
++        raise DomainError("E_BAD_INPUT", "Credit limit cannot be negative")
++
++    customer.credit_limit = float(money_amount.cents / 100)
++    emit("customer_credit_limit_updated", customer_id, new_limit=customer.credit_limit)
++    
++    return Money.parse(customer.credit_limit)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-11 18:20:19
+@@ -0,0 +1,40 @@
++import pytest
++from parcelo.customers import add_customer, set_credit_limit
++from parcelo.store import db, reset
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++@pytest.fixture(autouse=True)
++def setup_db():
++    reset()
++
++def test_set_credit_limit_success():
++    customer = add_customer("Alice")
++    cid = customer.id
++    
++    new_limit = set_credit_limit(cid, 1000.00)
++    
++    assert new_limit == Money.parse(1000.00)
++    assert db.customers[cid].credit_limit == 1000.00
++
++def test_set_credit_limit_customer_not_found():
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit("C-NONEXISTENT", 100.00)
++    assert exc.value.code == "E_UNKNOWN_CUSTOMER"
++
++def test_set_credit_limit_negative_amount():
++    customer = add_customer("Bob")
++    cid = customer.id
++    
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit(cid, -1.00)
++    assert exc.value.code == "E_BAD_INPUT"
++
++def test_set_credit_limit_zero_amount():
++    customer = add_customer("Charlie")
++    cid = customer.id
++    
++    new_limit = set_credit_limit(cid, 0)
++    
++    assert new_limit == Money.parse(0)
++    assert db.customers[cid].credit_limit == 0.0

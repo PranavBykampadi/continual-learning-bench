@@ -1,0 +1,32 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-11 17:34:25
++++ b/parcelo/invoices.py	2026-11-11 17:41:43
+@@ -30,5 +30,17 @@
+     return invoice
+ 
+ 
++def reopen_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "paid":
++        raise ValueError("only paid invoices can be reopened")
++    invoice.status = "open"
++    invoice.paid_at = None
++    invoice.reopened_at = datetime.now()
++    return invoice
++
++
+ def open_invoices():
+-    return [i for i in db.invoices.values() if i.status == "open"]
++    return [i for i in db.invoices.values() if i.status == "open"]
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-11 17:34:25
++++ b/parcelo/models.py	2026-11-11 17:41:22
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    reopened_at: object = None
+\ No newline at end of file

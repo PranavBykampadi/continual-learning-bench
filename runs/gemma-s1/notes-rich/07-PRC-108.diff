@@ -1,0 +1,93 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:48:00
+@@ -1,11 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: add outstanding_by_customer (PRC-108)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:34:25
++++ b/parcelo/reports.py	2026-11-11 17:47:27
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +23,18 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer():
++    balances = {}
++    # Invoices reference shipments, and shipments reference customers
++    for invoice in db.invoices.values():
++        if invoice.status == "open":
++            shipment = db.shipments[invoice.shipment_id]
++            customer_id = shipment.customer_id
++            
++            amount = Money.parse(invoice.amount)
++            current_total = balances.get(customer_id, Money.zero())
++            balances[customer_id] = current_total + amount
++            
++    return balances
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-11 17:47:56
+@@ -0,0 +1,44 @@
++from parcelo.money import Money
++from parcelo.models import Customer, Shipment, Invoice
++from parcelo.store import db, reset
++from parcelo.reports import outstanding_by_customer
++
++def test_outstanding_by_customer():
++    reset()
++    
++    # Setup customers
++    c1 = Customer(id="C1", name="Alice")
++    c2 = Customer(id="C2", name="Bob")
++    db.customers[c1.id] = c1
++    db.customers[c2.id] = c2
++    
++    # Setup shipments
++    s1 = Shipment(id="S1", customer_id="C1", weight_kg=1.0, zone="A")
++    s2 = Shipment(id="S2", customer_id="C1", weight_kg=1.0, zone="A")
++    s3 = Shipment(id="S3", customer_id="C2", weight_kg=1.0, zone="A")
++    db.shipments[s1.id] = s1
++    db.shipments[s2.id] = s2
++    db.shipments[s3.id] = s3
++    
++    # Setup invoices
++    # Alice has one open, one paid
++    i1 = Invoice(id="I1", shipment_id="S1", amount=10.50, status="open")
++    i2 = Invoice(id="I2", shipment_id="S2", amount=20.00, status="paid")
++    # Bob has one open, one void
++    i3 = Invoice(id="I3", shipment_id="S3", amount=15.25, status="open")
++    i4 = Invoice(id="I4", shipment_id="S3", amount=5.00, status="void")
++    
++    db.invoices[i1.id] = i1
++    db.invoices[i2.id] = i2
++    db.invoices[i3.id] = i3
++    db.invoices[i4.id] = i4
++    
++    balances = outstanding_by_customer()
++    
++    assert balances["C1"] == Money.parse(10.50)
++    assert balances["C2"] == Money.parse(15.25)
++    assert len(balances) == 2
++
++def test_outstanding_by_customer_empty():
++    reset()
++    assert outstanding_by_customer() == {}

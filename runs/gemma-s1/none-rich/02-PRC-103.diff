@@ -1,0 +1,19 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-11 17:34:25
++++ b/parcelo/rates.py	2026-11-11 17:35:43
+@@ -12,3 +12,14 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    # Use the same surcharge percentages as in legacy billing
++    surcharge_pcts = {"local": 0.0, "national": 4.0, "international": 9.5}
++    if zone not in surcharge_pcts:
++        raise ValueError("unknown zone: %s" % zone)
++
++    amount = quote(weight_kg, zone)
++    surcharge = round(amount * surcharge_pcts[zone] / 100.0, 2)
++    return round(amount + surcharge, 2)
+\ No newline at end of file

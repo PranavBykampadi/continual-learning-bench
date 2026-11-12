@@ -1,0 +1,115 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:49:54
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add delivery addresses (PRC-109)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:34:25
++++ b/parcelo/customers.py	2026-11-11 17:49:30
+@@ -1,7 +1,8 @@
+ import uuid
+ 
+-from parcelo.models import Customer
++from parcelo.models import Customer, Address
+ from parcelo.store import db
++from parcelo.errors import DomainError
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -27,3 +28,19 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def add_address(customer_id, line, city):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", "customer not found")
++    if not line or not city:
++        raise DomainError("E_BAD_INPUT", "line and city are required")
++
++    address = Address(
++        id="A" + uuid.uuid4().hex[:6],
++        customer_id=customer_id,
++        line=line,
++        city=city
++    )
++    db.addresses[address.id] = address
++    return address
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-11 17:34:25
++++ b/parcelo/models.py	2026-11-11 17:49:06
+@@ -11,6 +11,14 @@
+ 
+ 
+ @dataclass
++class Address:
++    id: str
++    customer_id: str
++    line: str
++    city: str
++
++
++@dataclass
+ class Shipment:
+     id: str
+     customer_id: str
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-11 17:34:25
++++ b/parcelo/store.py	2026-11-11 17:49:11
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.addresses = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.addresses.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_addresses.py b/tests/unit/test_addresses.py
+--- a/tests/unit/test_addresses.py	1969-12-31 19:00:00
++++ b/tests/unit/test_addresses.py	2026-11-11 17:49:48
+@@ -0,0 +1,33 @@
++import pytest
++from parcelo.customers import add_customer, add_address
++from parcelo.store import reset
++from parcelo.errors import DomainError
++
++def test_add_address_success():
++    reset()
++    customer = add_customer("John Doe")
++    address = add_address(customer.id, "123 Main St", "New York")
++    assert address.id.startswith("A")
++    assert address.customer_id == customer.id
++    assert address.line == "123 Main St"
++    assert address.city == "New York"
++
++def test_add_address_customer_not_found():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        add_address("NONEXISTENT", "123 Main St", "New York")
++    assert excinfo.value.code == "E_UNKNOWN_CUSTOMER"
++
++def test_add_address_missing_line():
++    reset()
++    customer = add_customer("John Doe")
++    with pytest.raises(DomainError) as excinfo:
++        add_address(customer.id, "", "New York")
++    assert excinfo.value.code == "E_BAD_INPUT"
++
++def test_add_address_missing_city():
++    reset()
++    customer = add_customer("John Doe")
++    with pytest.raises(DomainError) as excinfo:
++        add_address(customer.id, "123 Main St", "")
++    assert excinfo.value.code == "E_BAD_INPUT"

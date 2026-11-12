@@ -1,0 +1,90 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:12:53
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: set a customer credit limit (PRC-150)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-11 17:34:25
++++ b/parcelo/customers.py	2026-11-11 18:12:26
+@@ -2,6 +2,9 @@
+ 
+ from parcelo.models import Customer
+ from parcelo.store import db
++from parcelo.money import Money
++from parcelo.errors import DomainError
++from parcelo.events import emit
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -27,3 +30,17 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def set_credit_limit(customer_id, amount):
++    customer = db.customers.get(customer_id)
++    if not customer:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"Customer {customer_id} not found")
++
++    money_amount = Money.parse(amount)
++    if money_amount.cents < 0:
++        raise DomainError("E_NEGATIVE_AMOUNT", "Credit limit cannot be negative")
++
++    customer.credit_limit = money_amount
++    emit("customer_credit_limit_set", customer.id, limit=money_amount)
++    return money_amount
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 18:12:07
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_NEGATIVE_AMOUNT",
+ }
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-11 18:12:46
+@@ -0,0 +1,33 @@
++import pytest
++from parcelo.customers import add_customer, set_credit_limit
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++from parcelo.events import OUTBOX
++
++def test_set_credit_limit_success():
++    db.customers.clear()
++    OUTBOX.clear()
++    customer = add_customer("Alice")
++    
++    new_limit = set_credit_limit(customer.id, 1000.50)
++    
++    assert new_limit == Money(100050)
++    assert customer.credit_limit == Money(100050)
++    assert len(OUTBOX) == 1
++    assert OUTBOX[0]["name"] == "customer_credit_limit_set"
++    assert OUTBOX[0]["entity_id"] == customer.id
++    assert OUTBOX[0]["payload"]["limit"] == Money(100050)
++
++def test_set_credit_limit_customer_not_found():
++    db.customers.clear()
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit("NONEXISTENT", 100)
++    assert exc.value.code == "E_UNKNOWN_CUSTOMER"
++
++def test_set_credit_limit_negative_amount():
++    db.customers.clear()
++    customer = add_customer("Bob")
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit(customer.id, -10.00)
++    assert exc.value.code == "E_NEGATIVE_AMOUNT"

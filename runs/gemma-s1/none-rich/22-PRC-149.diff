@@ -1,0 +1,23 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-11 17:34:25
++++ b/parcelo/shipments.py	2026-11-11 17:48:27
+@@ -28,3 +28,19 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def split_shipment(shipment_id, weights):
++    shipment = get_shipment(shipment_id)
++    if shipment.status != "created":
++        raise DomainError("E_NOT_SPLITTABLE", shipment_id)
++    if sum(weights) != shipment.weight_kg:
++        raise DomainError("E_WEIGHT_MISMATCH", f"Expected {shipment.weight_kg}, got {sum(weights)}")
++
++    shipment.status = "split"
++    new_shipments = []
++    for weight in weights:
++        new_shp = create_shipment(shipment.customer_id, weight, shipment.zone)
++        new_shipments.append(new_shp)
++    
++    return new_shipments

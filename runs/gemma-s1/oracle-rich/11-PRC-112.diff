@@ -1,0 +1,160 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:56:09
+@@ -1,11 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- claims: allow filing claims on delivered shipments (PRC-112)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/claims.py b/parcelo/claims.py
+--- a/parcelo/claims.py	1969-12-31 19:00:00
++++ b/parcelo/claims.py	2026-11-11 17:55:33
+@@ -0,0 +1,37 @@
++from dataclasses import dataclass
++from datetime import datetime
++
++from parcelo import store, clock, ids, errors, audit
++from parcelo.money import Money
++
++@dataclass
++class Claim:
++    id: str
++    shipment_id: str
++    amount: Money
++    reason: str
++    filed_at: datetime
++
++def file_claim(shipment_id: str, amount: Money, reason: str) -> Claim:
++    shipment = store.db.shipments.get(shipment_id)
++    if not shipment:
++        raise errors.DomainError("E_NOT_FOUND", f"Shipment {shipment_id} not found")
++
++    if getattr(shipment, 'status', None) != 'delivered':
++        raise errors.DomainError("E_INVALID_SHIPMENT_STATE", "Only delivered shipments can have claims")
++
++    if amount.cents <= 0:
++        raise errors.DomainError("E_INVALID_AMOUNT", "Claim amount must be positive")
++
++    claim = Claim(
++        id=ids.new_id("clm"),
++        shipment_id=shipment_id,
++        amount=amount,
++        reason=reason,
++        filed_at=clock.now()
++    )
++
++    store.db.claims[claim.id] = claim
++    audit.record("file_claim", claim.id, shipment_id=shipment_id, amount=amount.cents)
++
++    return claim
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 17:54:52
+@@ -6,6 +6,8 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_INVALID_SHIPMENT_STATE",
++    "E_INVALID_AMOUNT",
+ }
+ 
+ 
+@@ -15,4 +17,4 @@
+             raise RuntimeError(f"unregistered error code {code}")
+         super().__init__(f"{code}: {message}")
+         self.code = code
+-        self.message = message
++        self.message = message
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-11 17:34:25
++++ b/parcelo/store.py	2026-11-11 17:54:57
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.claims = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.claims.clear()
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_claims.py b/tests/unit/test_claims.py
+--- a/tests/unit/test_claims.py	1969-12-31 19:00:00
++++ b/tests/unit/test_claims.py	2026-11-11 17:56:06
+@@ -0,0 +1,63 @@
++import pytest
++from parcelo import store, money, claims, errors
++
++def test_file_claim_success():
++    store.reset()
++    shipment_id = "sh_123"
++    # Mocking shipment object
++    class Shipment:
++        def __init__(self, status):
++            self.status = status
++    
++    store.db.shipments[shipment_id] = Shipment(status="delivered")
++    
++    amount = money.Money.parse("10.00")
++    reason = "Damaged goods"
++    
++    claim = claims.file_claim(shipment_id, amount, reason)
++    
++    assert claim.id.startswith("clm_")
++    assert claim.shipment_id == shipment_id
++    assert claim.amount == amount
++    assert claim.reason == reason
++    assert store.db.claims[claim.id] == claim
++
++def test_file_claim_shipment_not_found():
++    store.reset()
++    amount = money.Money.parse("10.00")
++    with pytest.raises(errors.DomainError) as exc:
++        claims.file_claim("non_existent", amount, "reason")
++    assert exc.value.code == "E_NOT_FOUND"
++
++def test_file_claim_not_delivered():
++    store.reset()
++    shipment_id = "sh_123"
++    class Shipment:
++        def __init__(self, status):
++            self.status = status
++    
++    store.db.shipments[shipment_id] = Shipment(status="pending")
++    
++    amount = money.Money.parse("10.00")
++    with pytest.raises(errors.DomainError) as exc:
++        claims.file_claim(shipment_id, amount, "reason")
++    assert exc.value.code == "E_INVALID_SHIPMENT_STATE"
++
++def test_file_claim_non_positive_amount():
++    store.reset()
++    shipment_id = "sh_123"
++    class Shipment:
++        def __init__(self, status):
++            self.status = status
++    
++    store.db.shipments[shipment_id] = Shipment(status="delivered")
++    
++    amount = money.Money.parse("0.00")
++    with pytest.raises(errors.DomainError) as exc:
++        claims.file_claim(shipment_id, amount, "reason")
++    assert exc.value.code == "E_INVALID_AMOUNT"
++
++    amount_neg = money.Money.parse("-1.00")
++    with pytest.raises(errors.DomainError) as exc:
++        claims.file_claim(shipment_id, amount_neg, "reason")
++    assert exc.value.code == "E_INVALID_AMOUNT"

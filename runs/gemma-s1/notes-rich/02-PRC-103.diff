@@ -1,0 +1,47 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:37:25
+@@ -2,10 +2,11 @@
+ 
+ ## Unreleased
+ 
++- rates: add quote_with_surcharge (PRC-103)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-11 17:34:25
++++ b/parcelo/rates.py	2026-11-11 17:37:20
+@@ -1,14 +1,23 @@
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import fuel_surcharge
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+-        raise ValueError("unknown zone: %s" % zone)
++        raise DomainError("E_BAD_ZONE", "unknown zone: %s" % zone)
+     return ZONE_BASE[zone]
+ 
+ 
+ def quote(weight_kg, zone):
+     if weight_kg <= 0:
+-        raise ValueError("weight must be positive")
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    base = quote(weight_kg, zone)
++    surcharge = fuel_surcharge(base, zone)
++    return round(base + surcharge, 2)
+\ No newline at end of file

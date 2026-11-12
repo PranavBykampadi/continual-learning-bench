@@ -1,0 +1,121 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:57:22
+@@ -1,11 +1,4 @@
+ # Changelog
+ 
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- billing: apply a credit to an open invoice (PRC-113)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 17:56:24
+@@ -6,6 +6,8 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_INVOICE_NOT_OPEN",
++    "E_CREDIT_TOO_LARGE",
+ }
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-11 17:34:25
++++ b/parcelo/invoices.py	2026-11-11 17:56:50
+@@ -4,6 +4,9 @@
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
++from parcelo.money import Money
++from parcelo.errors import DomainError
++from parcelo.audit import record
+ 
+ 
+ def issue_invoice(shipment_id):
+@@ -32,3 +35,25 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
++
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_INVOICE_NOT_OPEN", "Invoice is not open")
++
++    invoice_money = Money.parse(invoice.amount)
++    credit_money = Money.parse(amount)
++
++    if credit_money.cents > invoice_money.cents:
++        raise DomainError("E_CREDIT_TOO_LARGE", "Credit exceeds invoice amount")
++
++    remaining_money = invoice_money - credit_money
++    invoice.amount = remaining_money.cents / 100.0
++
++    record("apply_credit", invoice_id, credit=credit_money.cents, remaining=remaining_money.cents)
++
++    return remaining_money
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_apply_credit.py b/tests/unit/test_apply_credit.py
+--- a/tests/unit/test_apply_credit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_apply_credit.py	2026-11-11 17:57:18
+@@ -0,0 +1,50 @@
++import pytest
++from parcelo.store import db, reset
++from parcelo.invoices import apply_credit
++from parcelo.models import Invoice
++from parcelo.money import Money
++from parcelo.errors import DomainError
++
++def test_apply_credit_success():
++    reset()
++    invoice = Invoice(id="INV-123", shipment_id="SHIP-1", amount=100.0)
++    db.invoices[invoice.id] = invoice
++    
++    remaining = apply_credit("INV-123", 40.0)
++    
++    assert remaining == Money.parse(60.0)
++    assert invoice.amount == 60.0
++
++def test_apply_credit_not_found():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit("NON-EXISTENT", 10.0)
++    assert excinfo.value.code == "E_NOT_FOUND"
++
++def test_apply_credit_not_open():
++    reset()
++    invoice = Invoice(id="INV-123", shipment_id="SHIP-1", amount=100.0, status="paid")
++    db.invoices[invoice.id] = invoice
++    
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit("INV-123", 10.0)
++    assert excinfo.value.code == "E_INVOICE_NOT_OPEN"
++
++def test_apply_credit_too_large():
++    reset()
++    invoice = Invoice(id="INV-123", shipment_id="SHIP-1", amount=100.0)
++    db.invoices[invoice.id] = invoice
++    
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit("INV-123", 110.0)
++    assert excinfo.value.code == "E_CREDIT_TOO_LARGE"
++
++def test_apply_credit_exact_amount():
++    reset()
++    invoice = Invoice(id="INV-123", shipment_id="SHIP-1", amount=100.0)
++    db.invoices[invoice.id] = invoice
++    
++    remaining = apply_credit("INV-123", 100.0)
++    
++    assert remaining == Money.parse(0.0)
++    assert invoice.amount == 0.0

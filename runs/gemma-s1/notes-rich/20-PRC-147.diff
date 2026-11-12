@@ -1,0 +1,47 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:14:36
+@@ -5,8 +5,9 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:34:25
++++ b/parcelo/reports.py	2026-11-11 18:14:30
+@@ -22,3 +22,28 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def volume_report():
++    def get_tier(count):
++        if count >= 50:
++            return "bulk"
++        if count >= 10:
++            return "regular"
++        return "starter"
++
++    # Map shipments to customer IDs
++    counts = {}
++    for shipment in db.shipments.values():
++        cid = shipment.customer_id
++        counts[cid] = counts.get(cid, 0) + 1
++
++    # Ensure every customer is included
++    report = {}
++    for cid in db.customers:
++        count = counts.get(cid, 0)
++        report[cid] = {
++            "shipments": count,
++            "tier": get_tier(count)
++        }
++    return report

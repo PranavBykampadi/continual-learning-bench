@@ -1,0 +1,158 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 17:45:27
+@@ -1,11 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- invoices: add late_fee_for (PRC-106)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 17:44:19
+@@ -15,4 +15,4 @@
+             raise RuntimeError(f"unregistered error code {code}")
+         super().__init__(f"{code}: {message}")
+         self.code = code
+-        self.message = message
++        self.message = message
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-11 17:34:25
++++ b/parcelo/invoices.py	2026-11-11 17:44:46
+@@ -1,7 +1,10 @@
+ import uuid
+-from datetime import datetime
++from datetime import datetime, timedelta
+ 
++from parcelo.clock import now
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -12,7 +15,7 @@
+         id="INV-" + uuid.uuid4().hex[:8],
+         shipment_id=shipment_id,
+         amount=quote(shipment.weight_kg, shipment.zone),
+-        issued_at=datetime.utcnow(),
++        issued_at=now(),
+     )
+     db.invoices[invoice.id] = invoice
+     print("issued invoice", invoice.id)
+@@ -21,14 +24,36 @@
+ 
+ def mark_paid(invoice_id):
+     if invoice_id not in db.invoices:
+-        raise KeyError(invoice_id)
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
+     invoice = db.invoices[invoice_id]
+     if invoice.status == "paid":
+-        raise ValueError("already paid")
++        raise DomainError("E_BAD_STATE", "already paid")
+     invoice.status = "paid"
+-    invoice.paid_at = datetime.now()
++    invoice.paid_at = now()
+     return invoice
+ 
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def late_fee_for(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
++    
++    invoice = db.invoices[invoice_id]
++    amount = Money.parse(invoice.amount)
++    
++    # An invoice becomes late 30 days after it was issued.
++    due_date = invoice.issued_at + timedelta(days=30)
++    today = now()
++    
++    if today <= due_date:
++        return Money.zero()
++    
++    days_late = (today - due_date).days
++    # 1.5% of the invoice amount for each day past those 30 days.
++    daily_rate = 0.015
++    total_rate = daily_rate * days_late
++    
++    return amount.scale(total_rate)
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_late_fees.py b/tests/unit/test_late_fees.py
+--- a/tests/unit/test_late_fees.py	1969-12-31 19:00:00
++++ b/tests/unit/test_late_fees.py	2026-11-11 17:45:22
+@@ -0,0 +1,63 @@
++import pytest
++from datetime import datetime, timedelta
++from parcelo.clock import set_fixed, clear_fixed
++from parcelo.invoices import late_fee_for, issue_invoice
++from parcelo.store import db
++from parcelo.money import Money
++from parcelo.errors import DomainError
++
++def test_late_fee_not_late():
++    db.invoices.clear()
++    db.shipments.clear()
++    
++    # Setup shipment for invoice
++    shipment_id = "SHIP-1"
++    db.shipments[shipment_id] = type('Shipment', (), {'weight_kg': 10, 'zone': 'local'})
++    
++    fixed_now = datetime(2023, 1, 1)
++    set_fixed(fixed_now)
++    
++    invoice = issue_invoice(shipment_id)
++    
++    # 29 days later - not late
++    set_fixed(fixed_now + timedelta(days=29))
++    assert late_fee_for(invoice.id) == Money.zero()
++    
++    # 30 days later - still not late (becomes late AFTER 30 days)
++    set_fixed(fixed_now + timedelta(days=30))
++    assert late_fee_for(invoice.id) == Money.zero()
++    
++    clear_fixed()
++
++def test_late_fee_calculation():
++    db.invoices.clear()
++    db.shipments.clear()
++    
++    shipment_id = "SHIP-1"
++    db.shipments[shipment_id] = type('Shipment', (), {'weight_kg': 10, 'zone': 'local'})
++    
++    fixed_now = datetime(2023, 1, 1)
++    set_fixed(fixed_now)
++    
++    invoice = issue_invoice(shipment_id)
++    amount = invoice.amount # e.g. 100.0
++    
++    # 31 days later - 1 day late
++    # Fee = 1.5% * 1 * amount
++    set_fixed(fixed_now + timedelta(days=31))
++    expected = Money.parse(amount).scale(0.015 * 1)
++    assert late_fee_for(invoice.id) == expected
++    
++    # 35 days later - 5 days late
++    # Fee = 1.5% * 5 * amount
++    set_fixed(fixed_now + timedelta(days=35))
++    expected = Money.parse(amount).scale(0.015 * 5)
++    assert late_fee_for(invoice.id) == expected
++    
++    clear_fixed()
++
++def test_late_fee_non_existent_invoice():
++    db.invoices.clear()
++    with pytest.raises(DomainError) as excinfo:
++        late_fee_for("NON-EXISTENT")
++    assert excinfo.value.code == "E_NOT_FOUND"

@@ -1,0 +1,91 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:04:32
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: add insurance fee for declared value (PRC-144)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+@@ -9,4 +10,4 @@
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-11 17:34:25
++++ b/parcelo/rates.py	2026-11-11 18:04:03
+@@ -12,3 +12,27 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value, zone):
++    from parcelo.money import Money
++    from parcelo.errors import DomainError
++
++    if declared_value <= 0:
++        raise DomainError("E_BAD_INPUT", "declared value must be positive")
++
++    fuel_pcts = {"local": 0.0, "national": 4.0, "international": 9.5}
++    if zone not in fuel_pcts:
++        raise DomainError("E_BAD_ZONE", f"unknown zone: {zone}")
++
++    value_money = Money.parse(declared_value)
++    
++    # 2% insurance + zone fuel surcharge %
++    total_pct = 2.0 + fuel_pcts[zone]
++    fee = value_money.scale(total_pct / 100.0)
++    
++    min_fee = Money.parse(1.00)
++    if fee < min_fee:
++        return min_fee
++    
++    return fee
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_insurance_fee.py b/tests/unit/test_insurance_fee.py
+--- a/tests/unit/test_insurance_fee.py	1969-12-31 19:00:00
++++ b/tests/unit/test_insurance_fee.py	2026-11-11 18:04:25
+@@ -0,0 +1,38 @@
++from parcelo.rates import insurance_fee
++from parcelo.money import Money
++from parcelo.errors import DomainError
++import pytest
++
++def test_insurance_fee_local():
++    # 2% of 100 + 0% fuel = 2.00
++    result = insurance_fee(100.0, "local")
++    assert result == Money(200)
++
++def test_insurance_fee_national():
++    # 2% of 100 + 4% fuel = 6.00
++    result = insurance_fee(100.0, "national")
++    assert result == Money(600)
++
++def test_insurance_fee_international():
++    # 2% of 100 + 9.5% fuel = 11.50
++    result = insurance_fee(100.0, "international")
++    assert result == Money(1150)
++
++def test_insurance_fee_minimum():
++    # 2% of 10 + 0% fuel = 0.20 -> min 1.00
++    result = insurance_fee(10.0, "local")
++    assert result == Money(100)
++
++def test_insurance_fee_invalid_value():
++    with pytest.raises(DomainError) as exc:
++        insurance_fee(0, "local")
++    assert exc.value.code == "E_BAD_INPUT"
++    
++    with pytest.raises(DomainError) as exc:
++        insurance_fee(-10, "local")
++    assert exc.value.code == "E_BAD_INPUT"
++
++def test_insurance_fee_invalid_zone():
++    with pytest.raises(DomainError) as exc:
++        insurance_fee(100, "mars")
++    assert exc.value.code == "E_BAD_ZONE"

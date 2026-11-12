@@ -1,0 +1,127 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-11 17:34:25
++++ b/CHANGELOG.md	2026-11-11 18:03:18
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- invoices: apply credit to an open invoice (PRC-113)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-11 17:34:25
++++ b/parcelo/errors.py	2026-11-11 18:00:57
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_INSUFFICIENT_FUNDS",
+ }
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-11 17:34:25
++++ b/parcelo/invoices.py	2026-11-11 18:01:23
+@@ -4,6 +4,9 @@
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo import audit
+ 
+ 
+ def issue_invoice(shipment_id):
+@@ -32,3 +35,25 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
++    
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"Invoice {invoice_id} is not open")
++    
++    inv_money = Money.parse(invoice.amount)
++    credit_money = Money.parse(amount)
++    
++    if credit_money > inv_money:
++        raise DomainError("E_LIMIT", "Credit amount exceeds invoice amount")
++    
++    remaining_money = inv_money - credit_money
++    invoice.amount = float(remaining_money.cents) / 100.0
++    
++    audit.record("apply_credit", invoice_id, amount=amount, remaining=invoice.amount)
++    
++    return remaining_money
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_apply_credit.py b/tests/unit/test_apply_credit.py
+--- a/tests/unit/test_apply_credit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_apply_credit.py	2026-11-11 18:03:11
+@@ -0,0 +1,62 @@
++import pytest
++from parcelo.store import db, reset
++from parcelo.invoices import issue_invoice, apply_credit
++from parcelo.models import Shipment
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++def test_apply_credit_success():
++    reset()
++    # Setup shipment and invoice
++    shipment = Shipment(id="SHP-1", customer_id="CUST-1", weight_kg=1.0, zone="local")
++    db.shipments[shipment.id] = shipment
++    invoice = issue_invoice(shipment.id)
++    initial_amount = invoice.amount # e.g. 5.75
++    
++    # Apply credit (fixed amount to avoid float precision issues in test assertion)
++    credit_amount = 2.00
++    remaining = apply_credit(invoice.id, credit_amount)
++    
++    expected_remaining = Money.parse(initial_amount - credit_amount)
++    assert remaining == expected_remaining
++    assert invoice.amount == (initial_amount - credit_amount)
++
++def test_apply_credit_not_found():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit("NON-EXISTENT", 10.0)
++    assert excinfo.value.code == "E_NOT_FOUND"
++
++def test_apply_credit_not_open():
++    reset()
++    shipment = Shipment(id="SHP-1", customer_id="CUST-1", weight_kg=1.0, zone="local")
++    db.shipments[shipment.id] = shipment
++    invoice = issue_invoice(shipment.id)
++    
++    # Manually set to paid
++    invoice.status = "paid"
++    
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit(invoice.id, 1.0)
++    assert excinfo.value.code == "E_BAD_STATE"
++
++def test_apply_credit_exceeds_amount():
++    reset()
++    shipment = Shipment(id="SHP-1", customer_id="CUST-1", weight_kg=1.0, zone="local")
++    db.shipments[shipment.id] = shipment
++    invoice = issue_invoice(shipment.id)
++    
++    with pytest.raises(DomainError) as excinfo:
++        apply_credit(invoice.id, invoice.amount + 1.0)
++    assert excinfo.value.code == "E_LIMIT"
++
++def test_apply_credit_full_amount():
++    reset()
++    shipment = Shipment(id="SHP-1", customer_id="CUST-1", weight_kg=1.0, zone="local")
++    db.shipments[shipment.id] = shipment
++    invoice = issue_invoice(shipment.id)
++    
++    remaining = apply_credit(invoice.id, invoice.amount)
++    
++    assert remaining == Money.zero()
++    assert invoice.amount == 0.0

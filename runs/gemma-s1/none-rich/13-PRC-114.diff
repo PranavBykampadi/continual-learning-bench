@@ -1,0 +1,32 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-11 17:34:25
++++ b/parcelo/reports.py	2026-11-11 17:40:41
+@@ -1,6 +1,7 @@
+ from datetime import datetime
+ 
+ from parcelo.store import db
++from parcelo.legacy.billing import days_between
+ 
+ 
+ def revenue_total():
+@@ -22,3 +23,20 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def aging_report():
++    report = {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        
++        age = days_between(invoice.issued_at)
++        if age <= 30:
++            report["0-30"] += invoice.amount
++        elif age <= 60:
++            report["31-60"] += invoice.amount
++        else:
++            report["60+"] += invoice.amount
++            
++    return report
