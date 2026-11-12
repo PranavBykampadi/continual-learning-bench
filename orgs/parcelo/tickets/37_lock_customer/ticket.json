@@ -1,0 +1,13 @@
+{
+  "id": "PRC-163",
+  "title": "Lock a customer account",
+  "snapshot": "c",
+  "conventions": [
+    "events",
+    "errors",
+    "idempotent",
+    "changelog2",
+    "tests"
+  ],
+  "body": "Support locks accounts after suspicious logins.\n\nAdd a `locked` flag to `Customer` in `parcelo/models.py`, False by default. Add `lock_customer(customer_id)` to `parcelo/customers.py`. It sets `locked` to True and returns the customer.\n\nLocking a customer that does not exist must fail."
+}

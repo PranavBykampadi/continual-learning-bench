@@ -1,0 +1,13 @@
+{
+  "id": "PRC-162",
+  "title": "List invoices by status",
+  "snapshot": "c",
+  "conventions": [
+    "errors",
+    "sorted",
+    "docs_api",
+    "changelog2",
+    "tests"
+  ],
+  "body": "Finance wants a list of invoices in a given status.\n\nAdd `invoices_by_status(status)` to `parcelo/invoices.py`. It returns the invoices whose status is `status`, or an empty list if there are none. Only \"open\" and \"paid\" are valid statuses to ask for, anything else must fail."
+}

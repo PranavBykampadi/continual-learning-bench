@@ -1,0 +1,12 @@
+{
+  "id": "PRC-165",
+  "title": "Shipments without an invoice",
+  "snapshot": "c",
+  "conventions": [
+    "sorted",
+    "docs_api",
+    "changelog2",
+    "tests"
+  ],
+  "body": "Billing wants to know which shipments still have no invoice.\n\nAdd `shipments_without_invoice()` to `parcelo/reports.py`. It returns the list of shipments that no invoice refers to."
+}

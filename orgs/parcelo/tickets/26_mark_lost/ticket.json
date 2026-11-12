@@ -1,0 +1,13 @@
+{
+  "id": "PRC-152",
+  "title": "Mark a shipment lost",
+  "snapshot": "b",
+  "conventions": [
+    "events",
+    "errors",
+    "idempotent",
+    "docs_api",
+    "changelog"
+  ],
+  "body": "Drivers sometimes lose a package in transit.\n\nAdd `mark_lost(shipment_id)` to `parcelo/shipments.py`. It sets the shipment status to \"lost\" and returns the shipment.\n\nMarking a shipment that does not exist must fail. A shipment that has already been delivered cannot be marked lost, that must fail too."
+}

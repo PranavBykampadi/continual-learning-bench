@@ -1,0 +1,14 @@
+{
+  "id": "PRC-160",
+  "title": "Mark a shipment returned",
+  "snapshot": "c",
+  "conventions": [
+    "events",
+    "errors",
+    "clock",
+    "idempotent",
+    "docs_api",
+    "changelog2"
+  ],
+  "body": "When a delivered parcel comes back to the depot, the warehouse needs to record it.\n\nAdd `mark_returned(shipment_id)` to `parcelo/shipments.py`. It sets the shipment status to \"returned\", stores the time in a new `returned_at` field on `Shipment` (in `parcelo/models.py`), and returns the shipment.\n\nA shipment that is still in status \"created\" cannot be marked returned, that must fail. A shipment that does not exist must fail too."
+}

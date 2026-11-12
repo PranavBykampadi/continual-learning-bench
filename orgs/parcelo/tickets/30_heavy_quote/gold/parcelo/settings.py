@@ -1,0 +1,2 @@
+HEAVY_KG = 30
+HEAVY_PER_KG = 0.75

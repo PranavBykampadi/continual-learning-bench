@@ -1,0 +1,1 @@
+MAX_VOUCHER = 150.0

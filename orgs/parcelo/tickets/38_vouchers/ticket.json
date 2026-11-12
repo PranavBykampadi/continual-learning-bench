@@ -1,0 +1,14 @@
+{
+  "id": "PRC-164",
+  "title": "Goodwill vouchers",
+  "snapshot": "c",
+  "conventions": [
+    "ids",
+    "money",
+    "settings",
+    "events",
+    "docs_api",
+    "changelog2"
+  ],
+  "body": "Support hands out goodwill vouchers when something goes wrong.\n\nAdd a new module `parcelo/vouchers.py` with `issue_voucher(customer_id, amount)`. It creates a `Voucher` with an id, the customer id, the amount and `issued_at`, saves it in a new `vouchers` collection on the store, and returns it. Define the `Voucher` dataclass in `parcelo/models.py` (fields `id`, `customer_id`, `amount`, `issued_at`) and add the `vouchers` collection to `parcelo/store.py` (cleared in `reset()` like the others).\n\nA single voucher cannot be worth more than 150.00. Issuing one for a customer that does not exist, for more than that, or for an amount that is zero or negative must fail."
+}

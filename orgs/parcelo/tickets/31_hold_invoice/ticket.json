@@ -1,0 +1,13 @@
+{
+  "id": "PRC-157",
+  "title": "Put an invoice on hold",
+  "snapshot": "b",
+  "conventions": [
+    "events",
+    "clock",
+    "errors",
+    "idempotent",
+    "changelog"
+  ],
+  "body": "Finance wants to pause collection on an invoice while they sort something out with the customer.\n\nAdd `hold_invoice(invoice_id)` to `parcelo/invoices.py`. It sets the invoice status to \"on_hold\", stores the time it was put on hold in a new `held_at` field on `Invoice` (in `parcelo/models.py`), and returns the invoice.\n\nOnly open invoices can be put on hold. An invoice that does not exist must fail."
+}

@@ -1,0 +1,13 @@
+{
+  "id": "PRC-151",
+  "title": "List a customer's shipments",
+  "snapshot": "b",
+  "conventions": [
+    "errors",
+    "sorted",
+    "docs_api",
+    "changelog",
+    "tests"
+  ],
+  "body": "Support wants to see everything a customer has shipped.\n\nAdd `list_shipments(customer_id)` to `parcelo/shipments.py`. It returns the list of shipments that belong to that customer, or an empty list if there are none.\n\nAsking for a customer that does not exist must fail."
+}

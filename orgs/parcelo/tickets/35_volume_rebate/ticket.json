@@ -1,0 +1,13 @@
+{
+  "id": "PRC-161",
+  "title": "Volume rebate for a customer",
+  "snapshot": "c",
+  "conventions": [
+    "money",
+    "no_legacy",
+    "settings",
+    "errors",
+    "changelog2"
+  ],
+  "body": "Account managers want to see the volume rebate a customer has earned.\n\nAdd `rebate_for(customer_id)` to `parcelo/customers.py`. The rebate is a share of what the customer has paid us: 3% of the total of their paid invoices once they have 10 or more shipments, and 6% once they have 50 or more. With fewer than 10 shipments the rebate is zero. `volume_tier` in `parcelo/legacy/billing.py` already uses the same shipment-count cut-offs.\n\nAsking for a customer that does not exist must fail."
+}

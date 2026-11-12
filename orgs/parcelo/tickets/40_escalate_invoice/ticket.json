@@ -1,0 +1,14 @@
+{
+  "id": "PRC-166",
+  "title": "Escalate large unpaid invoices",
+  "snapshot": "c",
+  "conventions": [
+    "events",
+    "errors",
+    "idempotent",
+    "settings",
+    "docs_api",
+    "changelog2"
+  ],
+  "body": "Large unpaid invoices need to go to the collections team.\n\nAdd `escalate_invoice(invoice_id)` to `parcelo/invoices.py`. It sets the invoice status to \"escalated\" and returns the invoice.\n\nOnly open invoices of at least 500.00 can be escalated. An invoice that does not exist must fail."
+}

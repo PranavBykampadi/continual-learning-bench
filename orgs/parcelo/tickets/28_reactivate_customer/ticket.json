@@ -1,0 +1,14 @@
+{
+  "id": "PRC-154",
+  "title": "Reactivate a customer",
+  "snapshot": "b",
+  "conventions": [
+    "events",
+    "errors",
+    "idempotent",
+    "docs_api",
+    "changelog",
+    "tests"
+  ],
+  "body": "Customers who left sometimes come back, and account management needs to switch them on again.\n\nAdd `reactivate_customer(customer_id)` to `parcelo/customers.py`. It sets the customer's `active` flag to True and returns the customer.\n\nReactivating a customer that does not exist must fail."
+}

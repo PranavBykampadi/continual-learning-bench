@@ -1,0 +1,13 @@
+{
+  "id": "PRC-153",
+  "title": "Flag customers that need a review",
+  "snapshot": "b",
+  "conventions": [
+    "errors",
+    "settings",
+    "docs_api",
+    "changelog",
+    "tests"
+  ],
+  "body": "Account management wants a quick flag for customers whose accounts need a manual look.\n\nAdd `needs_review(customer_id)` to `parcelo/customers.py`. It returns True when the customer has more than 3 open invoices, or when the total of their open invoices is over 250.00. Otherwise it returns False. (`outstanding_balance` in the same file already totals the open invoices.)\n\nAsking about a customer that does not exist must fail."
+}

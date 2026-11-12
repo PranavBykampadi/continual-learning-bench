@@ -1,0 +1,12 @@
+{
+  "id": "PRC-155",
+  "title": "List customers by tier",
+  "snapshot": "b",
+  "conventions": [
+    "errors",
+    "sorted",
+    "docs_api",
+    "changelog"
+  ],
+  "body": "Sales wants to pull a list of customers on a given tier.\n\nAdd `customers_by_tier(tier)` to `parcelo/customers.py`. It returns the customers whose tier is `tier`, or an empty list if there are none. A tier that is not one of the known tiers (`TIERS` in the same file) must fail."
+}

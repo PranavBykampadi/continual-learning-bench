@@ -1,0 +1,13 @@
+{
+  "id": "PRC-156",
+  "title": "Quote for heavy parcels",
+  "snapshot": "b",
+  "conventions": [
+    "money",
+    "settings",
+    "errors",
+    "docs_api",
+    "changelog"
+  ],
+  "body": "Sales wants a price that covers heavy parcels.\n\nAdd `heavy_quote(weight_kg, zone)` to `parcelo/rates.py`. It returns the normal quote for that weight and zone, plus 0.75 for every kilogram above 30 kg. Parcels of 30 kg or less just get the normal quote. An unknown zone or a weight that is not positive must fail."
+}

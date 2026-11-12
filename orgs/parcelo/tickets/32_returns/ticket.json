@@ -1,0 +1,14 @@
+{
+  "id": "PRC-158",
+  "title": "Return requests for delivered shipments",
+  "snapshot": "b",
+  "conventions": [
+    "ids",
+    "events",
+    "clock",
+    "errors",
+    "sorted",
+    "settings"
+  ],
+  "body": "Customers can send a delivered parcel back, and support needs to log those requests.\n\nAdd a new module `parcelo/returns.py` with `request_return(shipment_id, reason)` and `returns_for(shipment_id)`. `request_return` creates a `ReturnRequest` with an id, the shipment id, the reason and `requested_at` (when it was filed), saves it in a new `returns` collection on the store, and returns it. `returns_for` returns the return requests filed for a shipment. Define the `ReturnRequest` dataclass in `parcelo/models.py` (fields `id`, `shipment_id`, `reason`, `requested_at`) and add the `returns` collection to `parcelo/store.py` (cleared in `reset()` like the others).\n\nA shipment can have at most 3 return requests. Filing a request for a shipment that does not exist must fail, and so must filing a fourth one. Only delivered shipments can be sent back."
+}

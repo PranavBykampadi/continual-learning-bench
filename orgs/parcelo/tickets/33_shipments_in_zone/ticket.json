@@ -1,0 +1,13 @@
+{
+  "id": "PRC-159",
+  "title": "List shipments by zone",
+  "snapshot": "c",
+  "conventions": [
+    "errors",
+    "sorted",
+    "docs_api",
+    "changelog2",
+    "tests"
+  ],
+  "body": "Ops wants to see all shipments going to a given zone.\n\nAdd `shipments_in_zone(zone)` to `parcelo/shipments.py`. It returns the shipments whose zone is `zone`, or an empty list if there are none. A zone that is not one of the known zones (`ZONE_BASE` in `parcelo/rates.py`) must fail."
+}
