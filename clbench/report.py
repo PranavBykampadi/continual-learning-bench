@@ -217,7 +217,7 @@ def render_combined(run_names):
         firsts = [o[0] for run in runs for o in exposures(run.get(name, [])).values()]
         lines.append(f"| {name} | {mean(firsts):.2f} (n={len(firsts)}) |")
     text = "\n".join(lines) + "\n"
-    (ROOT / "results" / "combined.md").write_text(text)
+    (ROOT / "results" / ("+".join(run_names) + ".md")).write_text(text)
     return text
 
 
