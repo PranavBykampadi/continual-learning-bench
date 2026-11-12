@@ -1,0 +1,144 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:57:51
+@@ -1,6 +1,11 @@
+ import uuid
+-from datetime import datetime
++from datetime import datetime, timezone
++from decimal import Decimal
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +37,33 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++LATE_AFTER_DAYS = 30
++LATE_FEE_DAILY_RATE = Decimal("0.015")
++
++
++def get_invoice(invoice_id):
++    invoice = db.invoices.get(invoice_id) if isinstance(invoice_id, str) else None
++    if invoice is None:
++        raise DomainError("E_NOT_FOUND", f"invoice {invoice_id!r} not found")
++    return invoice
++
++
++def late_fee_for(invoice_id):
++    """Late fee accrued on an open invoice as of now.
++
++    An invoice is late 30 days after issue; from then on it accrues 1.5% of
++    its amount for each full day past those 30 days.
++    """
++    invoice = get_invoice(invoice_id)
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice.id} is {invoice.status}")
++    issued_at = invoice.issued_at
++    if issued_at.tzinfo is None:
++        # issue_invoice stores naive UTC timestamps.
++        issued_at = issued_at.replace(tzinfo=timezone.utc)
++    days_late = (clock.now() - issued_at).days - LATE_AFTER_DAYS
++    if days_late <= 0:
++        return Money.zero()
++    return Money.parse(invoice.amount).scale(LATE_FEE_DAILY_RATE * days_late)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_late_fee.py b/tests/unit/test_invoices_late_fee.py
+--- a/tests/unit/test_invoices_late_fee.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_late_fee.py	2026-11-12 01:57:51
+@@ -0,0 +1,90 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++
++ISSUED = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
++
++
++def _issue(weight=2, zone="national"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, weight, zone)
++    inv = invoices.issue_invoice(s.id)  # 9.00 + 2 * 1.25 = 11.50
++    inv.issued_at = ISSUED
++    return inv
++
++
++def _at(days, **extra):
++    clock.set_fixed(ISSUED + timedelta(days=days, **extra))
++
++
++@pytest.mark.parametrize("days", [0, 1, 29, 30])
++def test_not_late_yet_is_zero(days):
++    inv = _issue()
++    _at(days)
++    assert invoices.late_fee_for(inv.id) == Money(0)
++
++
++def test_partial_day_past_30_is_still_zero():
++    inv = _issue()
++    _at(30, hours=23)
++    assert invoices.late_fee_for(inv.id) == Money(0)
++
++
++@pytest.mark.parametrize("days, expected", [(31, Money(17)), (40, Money(173)), (60, Money(518))])
++def test_fee_per_day_past_30(days, expected):
++    # 1150 cents * 1.5% = 17.25 cents per day
++    inv = _issue()
++    _at(days)
++    assert invoices.late_fee_for(inv.id) == expected
++
++
++def test_naive_issued_at_treated_as_utc():
++    inv = _issue()
++    inv.issued_at = datetime(2026, 1, 1, 12, 0)
++    _at(40)
++    assert invoices.late_fee_for(inv.id) == Money(173)
++
++
++def test_real_issue_flow_not_late():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "national")
++    inv = invoices.issue_invoice(s.id)
++    assert invoices.late_fee_for(inv.id) == Money(0)
++
++
++def test_read_only_no_audit_no_mutation():
++    inv = _issue()
++    _at(40)
++    before = len(audit.LOG)
++    invoices.late_fee_for(inv.id)
++    assert len(audit.LOG) == before
++    assert inv.status == "open"
++    assert inv.amount == 11.5
++
++
++@pytest.mark.parametrize("bad_id", ["nope", "", None, 123])
++def test_unknown_invoice(bad_id):
++    _issue()
++    with pytest.raises(DomainError) as err:
++        invoices.late_fee_for(bad_id)
++    assert err.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize("status", ["paid", "void"])
++def test_non_open_invoice_rejected(status):
++    inv = _issue()
++    inv.status = status
++    _at(40)
++    with pytest.raises(DomainError) as err:
++        invoices.late_fee_for(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++
++
++def test_get_invoice():
++    inv = _issue()
++    assert invoices.get_invoice(inv.id) is db.invoices[inv.id]

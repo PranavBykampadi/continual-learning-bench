@@ -1,0 +1,53 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:13:05
+@@ -12,3 +12,19 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG = 0.75
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus HEAVY_PER_KG for each kg above HEAVY_THRESHOLD_KG.
++
++    Raises ValueError for an unknown zone or a non-positive weight (via quote).
++    """
++    if weight_kg <= HEAVY_THRESHOLD_KG:
++        return quote(weight_kg, zone)  # also validates weight and zone
++    excess = weight_kg - HEAVY_THRESHOLD_KG
++    # Round once on the full total to avoid double-rounding the normal quote.
++    return round(base_rate(zone) + PER_KG * weight_kg + HEAVY_PER_KG * excess, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 02:12:54
+@@ -10,3 +10,26 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_heavy_quote_at_or_below_threshold_is_normal_quote():
++    assert rates.heavy_quote(2, "local") == rates.quote(2, "local")
++    assert rates.heavy_quote(30, "national") == rates.quote(30, "national")
++
++
++def test_heavy_quote_adds_surcharge_above_threshold():
++    # national: 9.0 + 1.25 * 32 = 49.0, plus 0.75 * 2 = 1.5
++    assert rates.heavy_quote(32, "national") == 50.5
++    # fractional excess is charged pro rata: 0.75 * 0.5
++    assert rates.heavy_quote(30.5, "local") == round(4.5 + 1.25 * 30.5 + 0.375, 2)
++
++
++@pytest.mark.parametrize("weight", [0, -1])
++def test_heavy_quote_rejects_non_positive_weight(weight):
++    with pytest.raises(ValueError):
++        rates.heavy_quote(weight, "local")
++
++
++def test_heavy_quote_rejects_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.heavy_quote(40, "moon")

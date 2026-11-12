@@ -1,0 +1,109 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:27:31
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: reactivate customer (PRC-154)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:27:30
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.reactivate_customer(customer_id)`: set a customer's `active` flag back to True; unknown id raises `E_NOT_FOUND`
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:27:28
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +20,18 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def reactivate_customer(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", f"unknown customer {customer_id}")
++    if customer.active:
++        # Already active: return unchanged, no event (callers retry on timeouts).
++        return customer
++    customer.active = True
++    events.emit("customer.reactivated", customer_id)
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reactivate_customer.py b/tests/unit/test_reactivate_customer.py
+--- a/tests/unit/test_reactivate_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reactivate_customer.py	2026-11-12 02:27:33
+@@ -0,0 +1,53 @@
++import pytest
++
++from parcelo import events
++from parcelo.customers import reactivate_customer
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++
++def _add(customer_id="C000001", active=True):
++    customer = Customer(id=customer_id, name="Acme", active=active)
++    db.customers[customer_id] = customer
++    return customer
++
++
++def test_reactivates_inactive_customer():
++    customer = _add(active=False)
++    result = reactivate_customer("C000001")
++    assert result is customer
++    assert customer.active is True
++
++
++def test_emits_event_on_reactivation():
++    _add(active=False)
++    reactivate_customer("C000001")
++    assert len(events.OUTBOX) == 1
++    assert events.OUTBOX[-1]["name"] == "customer.reactivated"
++    assert events.OUTBOX[-1]["entity_id"] == "C000001"
++
++
++def test_unknown_customer_raises_not_found():
++    with pytest.raises(DomainError) as exc:
++        reactivate_customer("C999999")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++def test_already_active_returns_unchanged_without_event():
++    customer = _add(active=True)
++    result = reactivate_customer("C000001")
++    assert result is customer
++    assert customer.active is True
++    assert events.OUTBOX == []
++
++
++def test_repeat_call_is_idempotent():
++    customer = _add(active=False)
++    reactivate_customer("C000001")
++    count_after_first = len(events.OUTBOX)
++    result = reactivate_customer("C000001")
++    assert result is customer
++    assert customer.active is True
++    assert len(events.OUTBOX) == count_after_first

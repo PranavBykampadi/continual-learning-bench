@@ -1,0 +1,60 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:07:03
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,18 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def volume_report():
++    """Shipment count and volume tier for every customer, keyed by customer id."""
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:07:13
+@@ -0,0 +1,27 @@
++from parcelo import customers, reports, shipments
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_volume_report_empty():
++    assert reports.volume_report() == {}
++
++
++def test_volume_report_counts_and_tiers():
++    idle = customers.add_customer("Idle")
++    small = customers.add_customer("Small")
++    regular = customers.add_customer("Regular")
++    bulk = customers.add_customer("Bulk")
++    _ship(small.id, 9)
++    _ship(regular.id, 10)
++    _ship(bulk.id, 50)
++
++    assert reports.volume_report() == {
++        idle.id: {"shipments": 0, "tier": "starter"},
++        small.id: {"shipments": 9, "tier": "starter"},
++        regular.id: {"shipments": 10, "tier": "regular"},
++        bulk.id: {"shipments": 50, "tier": "bulk"},
++    }

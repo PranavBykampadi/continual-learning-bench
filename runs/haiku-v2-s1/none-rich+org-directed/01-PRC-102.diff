@@ -1,0 +1,124 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 01:51:39
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- Added voiding of invoices issued by mistake (PRC-102)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:51:21
+@@ -1,6 +1,8 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import audit, clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -27,6 +29,32 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def void_invoice(invoice_id: str) -> Invoice:
++    """Void an invoice that was issued by mistake.
++
++    Args:
++        invoice_id: ID of the invoice to void.
++
++    Returns:
++        The voided invoice.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the invoice does not exist, or E_BAD_STATE
++            if it is already paid or already void.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "paid":
++        raise DomainError("E_BAD_STATE", f"{invoice_id} is already paid")
++    if invoice.status == "void":
++        raise DomainError("E_BAD_STATE", f"{invoice_id} is already void")
++    invoice.status = "void"
++    invoice.voided_at = clock.now()
++    audit.record("invoice.voided", invoice.id)
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 01:51:16
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    voided_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 01:51:38
+@@ -1,9 +1,55 @@
+-from parcelo import customers, invoices, shipments
++from datetime import datetime, timezone
+ 
++import pytest
+ 
++from parcelo import audit, clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
+ def test_issue_and_pay():
+     c = customers.add_customer("Acme")
+     s = shipments.create_shipment(c.id, 2, "local")
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_void_open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    moment = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    voided = invoices.void_invoice(inv.id)
++    assert voided.status == "void"
++    assert voided.voided_at == moment
++    assert audit.LOG[-1]["action"] == "invoice.voided"
++    assert audit.LOG[-1]["entity_id"] == inv.id
++    assert inv.id not in [i.id for i in invoices.open_invoices()]
++
++
++def test_void_missing_invoice_fails():
++    with pytest.raises(DomainError) as exc:
++        invoices.void_invoice("INV-nope")
++    assert exc.value.code == "E_NOT_FOUND"
++
++
++def test_void_paid_invoice_fails():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.void_invoice(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++
++
++def test_void_twice_fails():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.void_invoice(inv.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.void_invoice(inv.id)
++    assert exc.value.code == "E_BAD_STATE"

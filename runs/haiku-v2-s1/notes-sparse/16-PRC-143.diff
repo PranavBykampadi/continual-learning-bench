@@ -1,0 +1,146 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:07:22
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- pickups: schedule a pickup for a created shipment (PRC-143)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:07:23
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## pickups
++
++- `pickups.schedule_pickup(shipment_id, window_start)`: book a pickup for a shipment in status "created"
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:07:09
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Pickup:
++    id: str
++    shipment_id: str
++    window_start: object
++    scheduled_at: object
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/pickups.py b/parcelo/pickups.py
+--- a/parcelo/pickups.py	1969-12-31 19:00:00
++++ b/parcelo/pickups.py	2026-11-12 02:07:12
+@@ -0,0 +1,20 @@
++from parcelo import audit, clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Pickup
++from parcelo.shipments import STATUS_CREATED, get_shipment
++from parcelo.store import db
++
++
++def schedule_pickup(shipment_id, window_start):
++    shipment = get_shipment(shipment_id)
++    if shipment.status != STATUS_CREATED:
++        raise DomainError("E_BAD_STATE", "shipment must be in created status to schedule a pickup")
++    pickup = Pickup(
++        id=ids.new_id("pkp"),
++        shipment_id=shipment.id,
++        window_start=window_start,
++        scheduled_at=clock.now(),
++    )
++    db.pickups[pickup.id] = pickup
++    audit.record("pickup.scheduled", pickup.id, shipment_id=shipment.id)
++    return pickup
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:07:09
+@@ -4,6 +4,8 @@
+ from parcelo.rates import ZONE_BASE
+ from parcelo.store import db
+ 
++STATUS_CREATED = "created"
++
+ 
+ def create_shipment(customer_id, weight_kg, zone):
+     if customer_id not in db.customers:
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 02:07:09
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.pickups = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.pickups.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_pickups.py b/tests/unit/test_pickups.py
+--- a/tests/unit/test_pickups.py	1969-12-31 19:00:00
++++ b/tests/unit/test_pickups.py	2026-11-12 02:07:22
+@@ -0,0 +1,50 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, pickups, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 9, 0, tzinfo=timezone.utc)
++WINDOW = datetime(2026, 11, 13, 14, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def pinned_clock():
++    clock.set_fixed(NOW)
++    yield
++    clock.clear_fixed()
++
++
++def _shipment(status="created"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "national")
++    s.status = status
++    return s
++
++
++def test_schedule_pickup_creates_and_stores_pickup():
++    s = _shipment()
++    p = pickups.schedule_pickup(s.id, WINDOW)
++    assert p.id.startswith("pkp_")
++    assert p.shipment_id == s.id
++    assert p.window_start == WINDOW
++    assert p.scheduled_at == clock.now()
++    assert list(db.pickups.values()) == [p]
++
++
++def test_unknown_shipment_fails():
++    with pytest.raises(DomainError) as err:
++        pickups.schedule_pickup("shp_missing", WINDOW)
++    assert err.value.code == "E_NOT_FOUND"
++    assert db.pickups == {}
++
++
++@pytest.mark.parametrize("status", ["delivered", "in_transit", "cancelled"])
++def test_non_created_shipment_fails(status):
++    s = _shipment(status=status)
++    with pytest.raises(DomainError) as err:
++        pickups.schedule_pickup(s.id, WINDOW)
++    assert err.value.code == "E_BAD_STATE"
++    assert db.pickups == {}

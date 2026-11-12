@@ -1,0 +1,19 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:05:38
+@@ -12,3 +12,15 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG = 0.75
++
++
++def heavy_quote(weight_kg, zone):
++    # quote() validates weight and zone, so both checks apply here too.
++    price = quote(weight_kg, zone)
++    if weight_kg > HEAVY_THRESHOLD_KG:
++        price += HEAVY_PER_KG * (weight_kg - HEAVY_THRESHOLD_KG)
++    return round(price, 2)

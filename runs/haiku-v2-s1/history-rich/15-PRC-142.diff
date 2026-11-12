@@ -1,0 +1,97 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:01:29
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- invoices: reopen a paid invoice (PRC-142)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:01:28
+@@ -1,6 +1,8 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock, events
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -27,6 +29,20 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def reopen_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "paid":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is not paid")
++    now = clock.now()
++    invoice.status = "open"
++    invoice.paid_at = None
++    invoice.reopened_at = now
++    events.emit("invoice.reopened", invoice.id)
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:01:26
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    reopened_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reopen_invoice.py b/tests/unit/test_reopen_invoice.py
+--- a/tests/unit/test_reopen_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reopen_invoice.py	2026-11-12 02:01:35
+@@ -0,0 +1,41 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _issued_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++def test_reopen_paid_invoice():
++    inv = _issued_invoice()
++    invoices.mark_paid(inv.id)
++    moment = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    result = invoices.reopen_invoice(inv.id)
++    assert result is inv
++    assert inv.status == "open"
++    assert inv.paid_at is None
++    assert inv.reopened_at == moment
++    assert events.OUTBOX[-1]["name"] == "invoice.reopened"
++    assert events.OUTBOX[-1]["entity_id"] == inv.id
++
++
++def test_reopen_missing_invoice_fails():
++    with pytest.raises(DomainError) as err:
++        invoices.reopen_invoice("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_reopen_unpaid_invoice_fails():
++    inv = _issued_invoice()
++    with pytest.raises(DomainError) as err:
++        invoices.reopen_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == "open"
++    assert inv.reopened_at is None

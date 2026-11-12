@@ -1,0 +1,90 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:17:01
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:17:01
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report() -> dict`: per-customer `{"shipments": count, "tier": label}` for every customer, including those with no shipments (tier: `starter` <10, `regular` 10-49, `bulk` 50+). Raises no `DomainError` codes.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:16:58
+@@ -22,3 +22,29 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def _volume_tier(shipment_count):
++    # Copied from parcelo.legacy.billing.volume_tier (do not import legacy).
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Shipment count and volume tier for every customer.
++
++    Returns {customer_id: {"shipments": int, "tier": str}}. Customers with
++    no shipments are included with a count of 0. Read-only: emits no events.
++    Raises no DomainError.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_volume.py b/tests/unit/test_reports_volume.py
+--- a/tests/unit/test_reports_volume.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_volume.py	2026-11-12 02:17:03
+@@ -0,0 +1,31 @@
++from parcelo import customers, events, reports, shipments
++from parcelo.reports import _volume_tier
++
++
++def test_tier_thresholds_match_legacy():
++    assert _volume_tier(0) == "starter"
++    assert _volume_tier(9) == "starter"
++    assert _volume_tier(10) == "regular"
++    assert _volume_tier(49) == "regular"
++    assert _volume_tier(50) == "bulk"
++
++
++def test_empty_store():
++    assert reports.volume_report() == {}
++
++
++def test_counts_per_customer_including_zero():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    idle = customers.add_customer("Idle")
++    for _ in range(10):
++        shipments.create_shipment(a.id, 1.0, "local")
++    shipments.create_shipment(b.id, 2.0, "national")
++    events.OUTBOX.clear()
++
++    assert reports.volume_report() == {
++        a.id: {"shipments": 10, "tier": "regular"},
++        b.id: {"shipments": 1, "tier": "starter"},
++        idle.id: {"shipments": 0, "tier": "starter"},
++    }
++    assert events.OUTBOX == []

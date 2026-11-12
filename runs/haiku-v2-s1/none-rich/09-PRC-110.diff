@@ -1,0 +1,47 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 01:57:55
+@@ -12,3 +12,18 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++TIER_DISCOUNT_PCT = dict(standard=0, gold=10)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    if tier not in TIER_DISCOUNT_PCT:
++        raise ValueError("unknown tier: %s" % tier)
++    amount = quote(weight_kg, zone)
++    pct = TIER_DISCOUNT_PCT[tier]
++    if pct == 0:
++        return amount
++    from parcelo.legacy.billing import apply_discount
++
++    return apply_discount(amount, pct)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 01:57:56
+@@ -10,3 +10,21 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_discounted_quote_gold():
++    assert rates.discounted_quote(2, "local", "gold") == 6.3
++
++
++def test_discounted_quote_standard_unchanged():
++    assert rates.discounted_quote(2, "local", "standard") == rates.quote(2, "local")
++
++
++def test_discounted_quote_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "moon", "gold")
++
++
++def test_discounted_quote_unknown_tier():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "local", "platinum")

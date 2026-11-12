@@ -1,0 +1,123 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:56:10
+@@ -1,11 +1,16 @@
+ import uuid
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
++LATE_AFTER_DAYS = 30
++LATE_FEE_RATE_PER_DAY = 0.015
+ 
++
+ def issue_invoice(shipment_id):
+     shipment = db.shipments[shipment_id]
+     invoice = Invoice(
+@@ -32,3 +37,25 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def late_fee_for(invoice_id):
++    """Late fee in dollars for an invoice, as of now.
++
++    The invoice is late once it is 30 days old. After that the fee is 1.5% of
++    the invoice amount for each whole day past those 30 days. Rounded to cents
++    at the end.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++
++    issued_at = invoice.issued_at
++    if issued_at.tzinfo is None:
++        # Some older invoices were issued with naive UTC timestamps.
++        issued_at = issued_at.replace(tzinfo=timezone.utc)
++    elapsed = clock.now() - issued_at
++    days_past = elapsed.days - LATE_AFTER_DAYS
++    if days_past <= 0:
++        return 0.0
++    return round(invoice.amount * LATE_FEE_RATE_PER_DAY * days_past, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 01:56:20
+@@ -1,9 +1,71 @@
+-from parcelo import customers, invoices, shipments
++from datetime import datetime, timedelta, timezone
+ 
++import pytest
+ 
++from parcelo import clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
+ def test_issue_and_pay():
+     c = customers.add_customer("Acme")
+     s = shipments.create_shipment(c.id, 2, "local")
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def _invoice_issued_days_ago(days, amount=100.0):
++    from parcelo.models import Invoice
++    from parcelo.store import db
++
++    now = datetime(2026, 11, 12, tzinfo=timezone.utc)
++    clock.set_fixed(now)
++    inv = Invoice(
++        id="INV-TEST",
++        shipment_id="SHP-X",
++        amount=amount,
++        issued_at=now - timedelta(days=days),
++    )
++    db.invoices[inv.id] = inv
++    return inv
++
++
++def test_no_late_fee_before_30_days():
++    inv = _invoice_issued_days_ago(29)
++    assert invoices.late_fee_for(inv.id) == 0.0
++
++
++def test_no_late_fee_exactly_30_days():
++    inv = _invoice_issued_days_ago(30)
++    assert invoices.late_fee_for(inv.id) == 0.0
++
++
++def test_late_fee_one_day_past_30():
++    inv = _invoice_issued_days_ago(31, amount=100.0)
++    assert invoices.late_fee_for(inv.id) == 1.5
++
++
++def test_late_fee_accumulates_per_day():
++    inv = _invoice_issued_days_ago(40, amount=200.0)
++    assert invoices.late_fee_for(inv.id) == 30.0  # 10 days past 30 at 3 per day
++
++
++def test_late_fee_accepts_naive_issue_date():
++    from parcelo.models import Invoice
++    from parcelo.store import db
++
++    clock.set_fixed(datetime(2026, 11, 12, tzinfo=timezone.utc))
++    inv = Invoice(
++        id="INV-NAIVE",
++        shipment_id="SHP-X",
++        amount=100.0,
++        issued_at=datetime(2026, 11, 12) - timedelta(days=32),
++    )
++    db.invoices[inv.id] = inv
++    assert invoices.late_fee_for(inv.id) == 3.0
++
++
++def test_late_fee_unknown_invoice_fails():
++    with pytest.raises(DomainError) as exc:
++        invoices.late_fee_for("INV-MISSING")
++    assert exc.value.code == "E_NOT_FOUND"

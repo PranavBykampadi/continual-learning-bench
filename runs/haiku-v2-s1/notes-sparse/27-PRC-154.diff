@@ -1,0 +1,59 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:18:40
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: add `reactivate_customer` (PRC-154)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:18:39
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.reactivate_customer(customer_id)`: set a customer's `active` flag back to True and return the customer. Raises `KeyError` if the customer does not exist.
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:18:39
+@@ -20,6 +20,13 @@
+     return db.customers[customer_id]
+ 
+ 
++def reactivate_customer(customer_id):
++    # Raises KeyError for an unknown customer_id, same as get_customer.
++    customer = get_customer(customer_id)
++    customer.active = True
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:18:41
+@@ -0,0 +1,16 @@
++import pytest
++
++from parcelo import customers
++
++
++def test_reactivate_sets_active_and_returns_customer():
++    c = customers.add_customer("Acme")
++    c.active = False
++    result = customers.reactivate_customer(c.id)
++    assert result is c
++    assert c.active is True
++
++
++def test_reactivate_unknown_customer_fails():
++    with pytest.raises(KeyError):
++        customers.reactivate_customer("C_missing")

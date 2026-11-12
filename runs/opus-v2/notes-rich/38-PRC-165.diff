@@ -1,0 +1,81 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:34:43
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: list shipments that have no invoice
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:34:54
+@@ -15,3 +15,8 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: returns a list of `Shipment` objects that no invoice refers to; an invoice in any status (open or paid) counts. Takes no arguments. Idempotent: repeated calls return the same result and change nothing (read-only, emits no event). Sorted by shipment `id` ascending; returns an empty list when there are no shipments or every shipment has an invoice. No limits or rounding apply.
++  - Raises no `DomainError` codes.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:34:42
+@@ -22,3 +22,12 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    """Shipments that no invoice (in any status) refers to, sorted by id."""
++    invoiced = {i.shipment_id for i in db.invoices.values()}
++    return sorted(
++        (s for s in db.shipments.values() if s.id not in invoiced),
++        key=lambda s: s.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_without_invoice.py b/tests/unit/test_shipments_without_invoice.py
+--- a/tests/unit/test_shipments_without_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_without_invoice.py	2026-11-12 02:34:50
+@@ -0,0 +1,38 @@
++from parcelo import customers, events, invoices, reports, shipments
++from parcelo.store import db
++
++
++def _ship(customer):
++    return shipments.create_shipment(customer.id, 1, "local")
++
++
++def test_empty_when_no_shipments():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_lists_only_uninvoiced_sorted_by_id():
++    c = customers.add_customer("Acme")
++    s1, s2, s3 = _ship(c), _ship(c), _ship(c)
++    invoices.issue_invoice(s2.id)
++    # Reverse insertion order to prove the result is sorted by id.
++    reordered = {k: db.shipments[k] for k in reversed(list(db.shipments))}
++    db.shipments.clear()
++    db.shipments.update(reordered)
++    result = reports.shipments_without_invoice()
++    assert [s.id for s in result] == [s1.id, s3.id]
++
++
++def test_paid_invoice_still_counts_as_invoiced():
++    c = customers.add_customer("Acme")
++    s = _ship(c)
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    assert reports.shipments_without_invoice() == []
++
++
++def test_read_only_emits_no_event():
++    c = customers.add_customer("Acme")
++    s = _ship(c)
++    before = list(events.OUTBOX)
++    assert [x.id for x in reports.shipments_without_invoice()] == [s.id]
++    assert events.OUTBOX == before

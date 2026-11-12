@@ -1,0 +1,58 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 01:56:47
+@@ -1,6 +1,23 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Map each customer id to the total of their open invoices.
++
++    Paid and void invoices are excluded. Every known customer appears in the
++    result, with 0.0 if they have no open invoices. Totals are summed in
++    integer cents to avoid floating-point drift.
++    """
++    cents = {customer_id: 0 for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        cents[customer_id] = cents.get(customer_id, 0) + Money.parse(invoice.amount).cents
++    return {customer_id: total / 100 for customer_id, total in cents.items()}
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 01:56:55
+@@ -0,0 +1,27 @@
++from parcelo import reports, store
++from parcelo.models import Customer, Invoice, Shipment
++
++
++def _setup():
++    store.db.customers["A"] = Customer(id="A", name="Alice")
++    store.db.customers["B"] = Customer(id="B", name="Bob")
++    store.db.customers["C"] = Customer(id="C", name="Carol")
++    store.db.shipments["s1"] = Shipment(id="s1", customer_id="A", weight_kg=1, zone="local")
++    store.db.shipments["s2"] = Shipment(id="s2", customer_id="B", weight_kg=1, zone="local")
++
++
++def test_outstanding_sums_only_open_invoices_per_customer():
++    _setup()
++    store.db.invoices["i1"] = Invoice(id="i1", shipment_id="s1", amount=0.1, status="open")
++    store.db.invoices["i2"] = Invoice(id="i2", shipment_id="s1", amount=0.2, status="open")
++    store.db.invoices["i3"] = Invoice(id="i3", shipment_id="s2", amount=5.0, status="paid")
++    store.db.invoices["i4"] = Invoice(id="i4", shipment_id="s2", amount=7.0, status="void")
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {"A": 0.3, "B": 0.0, "C": 0.0}
++
++
++def test_outstanding_includes_customers_with_no_invoices():
++    _setup()
++    assert reports.outstanding_by_customer() == {"A": 0.0, "B": 0.0, "C": 0.0}

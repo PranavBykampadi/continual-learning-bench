@@ -1,0 +1,119 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:17:50
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:17:40
+@@ -14,6 +14,44 @@
+     return counts
+ 
+ 
++def _tier_label(shipment_count: int) -> str:
++    """Return the volume tier label for a shipment count.
++
++    Mirrors the thresholds of the legacy billing helper; copied here so new
++    code does not depend on the legacy package.
++
++    Args:
++        shipment_count: Number of shipments the customer has.
++
++    Returns:
++        "bulk" for 50 or more, "regular" for 10 to 49, otherwise "starter".
++    """
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report() -> dict:
++    """Summarize shipment volume for every customer.
++
++    Customers with no shipments are included with a count of zero.
++
++    Returns:
++        Dict keyed by customer id, where each value is
++        {"shipments": <count>, "tier": <label>}.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _tier_label(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 02:17:47
+@@ -0,0 +1,56 @@
++from parcelo import audit, customers, events, reports, shipments
++
++
++def _ship_n(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.5, "national")
++
++
++def test_includes_customers_with_no_shipments():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    _ship_n(a.id, 2)
++
++    report = reports.volume_report()
++
++    assert report == {
++        a.id: {"shipments": 2, "tier": "starter"},
++        b.id: {"shipments": 0, "tier": "starter"},
++    }
++
++
++def test_counts_only_each_customers_shipments():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    _ship_n(a.id, 3)
++    _ship_n(b.id, 1)
++
++    report = reports.volume_report()
++
++    assert report[a.id]["shipments"] == 3
++    assert report[b.id]["shipments"] == 1
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.volume_report() == {}
++
++
++def test_tier_thresholds():
++    cases = [(9, "starter"), (10, "regular"), (49, "regular"), (50, "bulk")]
++    for count, label in cases:
++        c = customers.add_customer(f"Customer {count}")
++        _ship_n(c.id, count)
++        report = reports.volume_report()
++        assert report[c.id] == {"shipments": count, "tier": label}
++
++
++def test_report_is_read_only():
++    c = customers.add_customer("Acme")
++    _ship_n(c.id, 2)
++    events.OUTBOX.clear()
++    audit.LOG.clear()
++
++    reports.volume_report()
++
++    assert events.OUTBOX == []
++    assert audit.LOG == []

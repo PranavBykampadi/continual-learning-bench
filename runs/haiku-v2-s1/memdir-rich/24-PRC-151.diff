@@ -1,0 +1,71 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:24:13
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: list_shipments per customer (PRC-151)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:24:12
+@@ -28,3 +28,9 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def list_shipments(customer_id):
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    return [s for s in db.shipments.values() if s.customer_id == customer_id]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_list_shipments.py b/tests/unit/test_list_shipments.py
+--- a/tests/unit/test_list_shipments.py	1969-12-31 19:00:00
++++ b/tests/unit/test_list_shipments.py	2026-11-12 02:24:15
+@@ -0,0 +1,43 @@
++import pytest
++
++from parcelo import customers, shipments
++from parcelo.errors import DomainError
++
++
++def test_lists_only_that_customers_shipments():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    s1 = shipments.create_shipment(a.id, 1.0, "local")
++    s2 = shipments.create_shipment(a.id, 2.0, "national")
++    other = shipments.create_shipment(b.id, 3.0, "international")
++
++    result = shipments.list_shipments(a.id)
++
++    assert result == [s1, s2]
++    assert other not in result
++
++
++def test_customer_with_no_shipments_gets_empty_list():
++    c = customers.add_customer("Initech")
++    assert shipments.list_shipments(c.id) == []
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        shipments.list_shipments("nope")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_listing_has_no_side_effects():
++    from parcelo import events
++    from parcelo.store import db
++
++    c = customers.add_customer("Umbrella")
++    shipments.create_shipment(c.id, 1.0, "local")
++    events.OUTBOX.clear()
++    before = dict(db.shipments)
++
++    shipments.list_shipments(c.id)
++
++    assert db.shipments == before
++    assert events.OUTBOX == []

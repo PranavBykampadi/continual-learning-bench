@@ -1,0 +1,36 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:09:45
+@@ -1,7 +1,9 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -27,6 +29,22 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++ESCALATION_THRESHOLD = Money.parse("500.00")
++
++
++def escalate_invoice(invoice_id):
++    """Send a large unpaid invoice to the collections team."""
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", "invoice is not open")
++    if Money.parse(invoice.amount) < ESCALATION_THRESHOLD:
++        raise DomainError("E_BAD_STATE", "invoice is below escalation threshold")
++    invoice.status = "escalated"
+     return invoice
+ 
+ 

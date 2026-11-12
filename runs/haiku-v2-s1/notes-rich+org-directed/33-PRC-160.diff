@@ -1,0 +1,163 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:31:02
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-160] shipments: mark a delivered shipment as returned
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:31:03
+@@ -10,7 +10,8 @@
+ ## shipments
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.get_shipment(shipment_id)`: fetch one shipment (read-only; raises `E_NOT_FOUND`)
++- `shipments.mark_returned(shipment_id)`: mark a delivered shipment as returned (mutating; raises `E_NOT_FOUND`, `E_BAD_STATE`; already-returned is a no-op)
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:30:55
+@@ -19,6 +19,7 @@
+     status: str = "created"
+     created_at: object = None
+     delivered_at: object = None
++    returned_at: object = None
+     notes: list = field(default_factory=list)
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:30:59
+@@ -1,4 +1,4 @@
+-from parcelo import clock, events, ids
++from parcelo import audit, clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+ from parcelo.rates import ZONE_BASE
+@@ -28,3 +28,32 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_returned(shipment_id: str) -> Shipment:
++    """Mark a delivered shipment as returned to the depot.
++
++    Only a shipment in status "delivered" can be returned. Marking a shipment
++    that is already "returned" is a no-op: it returns the shipment unchanged
++    and emits no event or audit entry.
++
++    Args:
++        shipment_id: ID of the shipment to mark.
++
++    Returns:
++        The updated shipment.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the shipment does not exist, or E_BAD_STATE
++            if it is not in status "delivered" or "returned".
++    """
++    shipment = get_shipment(shipment_id)
++    if shipment.status == "returned":
++        return shipment
++    if shipment.status != "delivered":
++        raise DomainError("E_BAD_STATE", shipment.status)
++    shipment.status = "returned"
++    shipment.returned_at = clock.now()
++    audit.record("shipment.returned", shipment.id)
++    events.emit("shipment.returned", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_returned.py b/tests/unit/test_mark_returned.py
+--- a/tests/unit/test_mark_returned.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_returned.py	2026-11-12 02:31:11
+@@ -0,0 +1,82 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _customer_id():
++    return customers.add_customer("Acme").id
++
++
++def _delivered_shipment():
++    shipment = shipments.create_shipment(_customer_id(), 2.0, "national")
++    shipment.status = "delivered"
++    events.OUTBOX.clear()
++    audit.LOG.clear()
++    return shipment
++
++
++def test_mark_returned_sets_status_and_time():
++    moment = datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    shipment = _delivered_shipment()
++
++    result = shipments.mark_returned(shipment.id)
++
++    assert result is shipment
++    assert result.status == "returned"
++    assert result.returned_at == moment
++    assert db.shipments[shipment.id].status == "returned"
++
++
++def test_mark_returned_emits_event_and_audit():
++    shipment = _delivered_shipment()
++
++    shipments.mark_returned(shipment.id)
++
++    assert events.OUTBOX[-1]["name"] == "shipment.returned"
++    assert events.OUTBOX[-1]["entity_id"] == shipment.id
++    assert audit.LOG[-1]["action"] == "shipment.returned"
++    assert audit.LOG[-1]["entity_id"] == shipment.id
++
++
++def test_mark_returned_is_idempotent():
++    shipment = _delivered_shipment()
++    shipments.mark_returned(shipment.id)
++    first_time = shipment.returned_at
++    events.OUTBOX.clear()
++    audit.LOG.clear()
++
++    result = shipments.mark_returned(shipment.id)
++
++    assert result.status == "returned"
++    assert result.returned_at == first_time
++    assert events.OUTBOX == []
++    assert audit.LOG == []
++
++
++def test_created_shipment_cannot_be_returned():
++    shipment = shipments.create_shipment(_customer_id(), 2.0, "national")
++    events.OUTBOX.clear()
++    audit.LOG.clear()
++
++    with pytest.raises(DomainError) as err:
++        shipments.mark_returned(shipment.id)
++
++    assert err.value.code == "E_BAD_STATE"
++    assert db.shipments[shipment.id].status == "created"
++    assert db.shipments[shipment.id].returned_at is None
++    assert events.OUTBOX == []
++    assert audit.LOG == []
++
++
++def test_unknown_shipment_fails():
++    with pytest.raises(DomainError) as err:
++        shipments.mark_returned("shp_missing")
++
++    assert err.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++    assert audit.LOG == []

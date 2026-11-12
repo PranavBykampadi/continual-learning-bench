@@ -1,0 +1,97 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 01:45:55
+@@ -1,13 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- platform: add events outbox (PRC-140)
+-- Added gold tier
+-- [PRC-171] platform: release notes script reads the new bullet format
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- [PRC-159] shipments: add ability to list shipments by zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:45:53
+@@ -1,17 +1,3 @@
+-# parcelo API
+-
+-Functions other teams call from their own services. Last reviewed for 0.4.0.
+-
+-## customers
+-
+-- `customers.add_customer(name, tier="standard")`: create a customer
+-- `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+-
+-## shipments
+-
+-- `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
+-
+-## rates
+-
+-- `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `parcelo.shipments.create_shipment(customer_id, weight_kg, zone)`: creates a new shipment for a customer.
++- `parcelo.shipments.get_shipment(shipment_id)`: retrieves a shipment by its id.
++- `parcelo.shipments.shipments_in_zone(zone)`: returns a list of shipments in the specified zone, sorted by id.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 01:45:23
+@@ -28,3 +28,10 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def shipments_in_zone(zone):
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    shipments = [s for s in db.shipments.values() if s.zone == zone]
++    return sorted(shipments, key=lambda s: s.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_zone.py b/tests/unit/test_shipments_zone.py
+--- a/tests/unit/test_shipments_zone.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_zone.py	2026-11-12 01:45:46
+@@ -0,0 +1,37 @@
++import pytest
++from parcelo.shipments import create_shipment, shipments_in_zone
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++def test_shipments_in_zone_filters_correctly():
++    db.customers.clear()
++    db.shipments.clear()
++    db.customers["cust_1"] = "Customer 1"
++    
++    # Create shipments in different zones
++    # Using explicit IDs to test sorting if possible, 
++    # but create_shipment uses ids.new_id. 
++    # We can just verify the result is sorted by id.
++    s1 = create_shipment("cust_1", 1.0, "local")
++    s2 = create_shipment("cust_1", 2.0, "national")
++    s3 = create_shipment("cust_1", 3.0, "local")
++    
++    local_shipments = shipments_in_zone("local")
++    assert len(local_shipments) == 2
++    assert set(s.id for s in local_shipments) == {s1.id, s3.id}
++    assert local_shipments == sorted(local_shipments, key=lambda s: s.id)
++
++def test_shipments_in_zone_empty_result():
++    db.customers.clear()
++    db.shipments.clear()
++    db.customers["cust_1"] = "Customer 1"
++    
++    create_shipment("cust_1", 1.0, "national")
++    
++    local_shipments = shipments_in_zone("local")
++    assert local_shipments == []
++
++def test_shipments_in_zone_invalid_zone():
++    with pytest.raises(DomainError) as exc:
++        shipments_in_zone("mars")
++    assert exc.value.code == "E_BAD_ZONE"

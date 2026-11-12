@@ -1,0 +1,110 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 01:57:02
+@@ -1,13 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- platform: add events outbox (PRC-140)
+-- Added gold tier
+-- [PRC-171] platform: release notes script reads the new bullet format
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- [PRC-165] reports: add `shipments_without_invoice()` to identify shipments pending billing
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:57:00
+@@ -1,17 +1,4 @@
+-# parcelo API
+-
+-Functions other teams call from their own services. Last reviewed for 0.4.0.
+-
+-## customers
+-
+-- `customers.add_customer(name, tier="standard")`: create a customer
+-- `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+-
+-## shipments
+-
+-- `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
+-
+-## rates
+-
+-- `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `parcelo.reports.revenue_total()`: calculates total revenue from paid invoices
++- `parcelo.reports.shipments_by_zone()`: returns a count of shipments grouped by zone
++- `parcelo.reports.daily_summary()`: returns a summary of total shipments and revenue
++- `parcelo.reports.shipments_without_invoice()`: returns a list of shipments that have no associated invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 01:56:22
+@@ -22,3 +22,12 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    invoiced_shipment_ids = {inv.shipment_id for inv in db.invoices.values()}
++    shipments = [
++        shp for shp in db.shipments.values()
++        if shp.id not in invoiced_shipment_ids
++    ]
++    return sorted(shipments, key=lambda x: x.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 01:56:52
+@@ -0,0 +1,47 @@
++from parcelo.store import db, reset
++from parcelo.reports import shipments_without_invoice
++from parcelo.models import Shipment, Invoice
++
++def test_shipments_without_invoice():
++    reset()
++    
++    # Setup shipments
++    s1 = Shipment(id="shp_1", customer_id="c1", weight_kg=1.0, zone="A")
++    s2 = Shipment(id="shp_2", customer_id="c1", weight_kg=2.0, zone="B")
++    s3 = Shipment(id="shp_3", customer_id="c2", weight_kg=3.0, zone="C")
++    
++    db.shipments[s1.id] = s1
++    db.shipments[s2.id] = s2
++    db.shipments[s3.id] = s3
++    
++    # Case 1: No invoices yet
++    result = shipments_without_invoice()
++    assert result == [s1, s2, s3]
++    
++    # Case 2: Some shipments have invoices
++    inv1 = Invoice(id="inv_1", shipment_id="shp_1", amount=10.0)
++    inv2 = Invoice(id="inv_2", shipment_id="shp_3", amount=30.0)
++    db.invoices[inv1.id] = inv1
++    db.invoices[inv2.id] = inv2
++    
++    result = shipments_without_invoice()
++    assert result == [s2]
++    
++    # Case 3: All shipments have invoices
++    inv3 = Invoice(id="inv_3", shipment_id="shp_2", amount=20.0)
++    db.invoices[inv3.id] = inv3
++    
++    result = shipments_without_invoice()
++    assert result == []
++
++def test_shipments_without_invoice_sorting():
++    reset()
++    s2 = Shipment(id="shp_2", customer_id="c1", weight_kg=2.0, zone="B")
++    s1 = Shipment(id="shp_1", customer_id="c1", weight_kg=1.0, zone="A")
++    
++    # Insert in non-sorted order
++    db.shipments[s2.id] = s2
++    db.shipments[s1.id] = s1
++    
++    result = shipments_without_invoice()
++    assert result == [s1, s2]

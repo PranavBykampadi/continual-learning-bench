@@ -1,0 +1,143 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 01:49:25
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- invoices: add hold_invoice (PRC-157)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+@@ -9,4 +10,4 @@
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:49:19
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.hold_invoice(invoice_id)`: put an open invoice on hold
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 01:47:43
+@@ -15,4 +15,4 @@
+             raise RuntimeError(f"unregistered error code {code}")
+         super().__init__(f"{code}: {message}")
+         self.code = code
+-        self.message = message
++        self.message = message
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:48:11
+@@ -4,6 +4,8 @@
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
++from parcelo.errors import DomainError
++from parcelo import clock, events
+ 
+ 
+ def issue_invoice(shipment_id):
+@@ -32,3 +34,23 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def hold_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
++    
++    invoice = db.invoices[invoice_id]
++    
++    if invoice.status == "on_hold":
++        return invoice
++        
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"Invoice {invoice_id} cannot be put on hold because its status is {invoice.status}")
++    
++    invoice.status = "on_hold"
++    invoice.held_at = clock.now()
++    
++    events.emit("invoice_held", invoice.id, held_at=invoice.held_at)
++    
++    return invoice
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 01:47:35
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    held_at: object = None
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_hold_invoice.py b/tests/unit/test_hold_invoice.py
+--- a/tests/unit/test_hold_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_hold_invoice.py	2026-11-12 01:49:08
+@@ -0,0 +1,52 @@
++import pytest
++from parcelo.store import db
++from parcelo.models import Invoice
++from parcelo.invoices import hold_invoice
++from parcelo.errors import DomainError
++from parcelo import clock, events
++
++def test_hold_invoice_success():
++    db.invoices.clear()
++    inv = Invoice(id="INV_001", shipment_id="SHP_001", amount=100.0, status="open")
++    db.invoices[inv.id] = inv
++    
++    # Use fixed clock to avoid race condition / microsecond diffs
++    frozen_now = clock.now()
++    clock.set_fixed(frozen_now)
++    
++    try:
++        result = hold_invoice(inv.id)
++        assert result.status == "on_hold"
++        assert result.held_at == frozen_now
++        assert len(events.OUTBOX) == 1
++        assert events.OUTBOX[0]["name"] == "invoice_held"
++        assert events.OUTBOX[0]["entity_id"] == inv.id
++    finally:
++        clock.clear_fixed()
++
++def test_hold_invoice_not_found():
++    db.invoices.clear()
++    with pytest.raises(DomainError) as exc:
++        hold_invoice("NONEXISTENT")
++    assert exc.value.code == "E_NOT_FOUND"
++
++def test_hold_invoice_invalid_state():
++    db.invoices.clear()
++    inv = Invoice(id="INV_001", shipment_id="SHP_001", amount=100.0, status="paid")
++    db.invoices[inv.id] = inv
++    
++    with pytest.raises(DomainError) as exc:
++        hold_invoice(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++
++def test_hold_invoice_idempotency():
++    db.invoices.clear()
++    events.OUTBOX.clear()
++    inv = Invoice(id="INV_001", shipment_id="SHP_001", amount=100.0, status="on_hold", held_at="some-time")
++    db.invoices[inv.id] = inv
++    
++    result = hold_invoice(inv.id)
++    
++    assert result.status == "on_hold"
++    assert result.held_at == "some-time"
++    assert len(events.OUTBOX) == 0
+\ No newline at end of file

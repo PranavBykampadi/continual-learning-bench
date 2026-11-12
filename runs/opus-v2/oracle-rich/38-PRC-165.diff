@@ -1,0 +1,70 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:20:27
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: add shipments_without_invoice listing shipments no invoice refers to
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:20:27
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments that no invoice refers to, sorted by id
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:20:27
+@@ -22,3 +22,11 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    invoiced = {invoice.shipment_id for invoice in db.invoices.values()}
++    return sorted(
++        (s for s in db.shipments.values() if s.id not in invoiced),
++        key=lambda s: s.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_shipments_without_invoice.py b/tests/unit/test_reports_shipments_without_invoice.py
+--- a/tests/unit/test_reports_shipments_without_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_shipments_without_invoice.py	2026-11-12 02:20:27
+@@ -0,0 +1,29 @@
++from parcelo import customers, reports, shipments
++from parcelo.models import Invoice, Shipment
++from parcelo.store import db
++
++
++def test_empty_store_returns_empty_list():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_excludes_invoiced_shipments():
++    c = customers.add_customer("Acme")
++    a = shipments.create_shipment(c.id, 1.0, "local")
++    b = shipments.create_shipment(c.id, 2.0, "national")
++    db.invoices["inv_1"] = Invoice(id="inv_1", shipment_id=a.id, amount=10.0)
++    assert reports.shipments_without_invoice() == [b]
++
++
++def test_paid_invoice_still_counts_as_invoiced():
++    c = customers.add_customer("Acme")
++    a = shipments.create_shipment(c.id, 1.0, "local")
++    db.invoices["inv_1"] = Invoice(id="inv_1", shipment_id=a.id, amount=10.0, status="paid")
++    assert reports.shipments_without_invoice() == []
++
++
++def test_sorted_by_id_not_storage_order():
++    for sid in ["shp_c", "shp_a", "shp_b"]:
++        db.shipments[sid] = Shipment(id=sid, customer_id="cus_1", weight_kg=1.0, zone="local")
++    result = reports.shipments_without_invoice()
++    assert [s.id for s in result] == ["shp_a", "shp_b", "shp_c"]

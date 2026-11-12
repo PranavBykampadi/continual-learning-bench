@@ -1,0 +1,100 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:09:25
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:09:26
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: map each customer id to `{"shipments": count, "tier": label}`, including customers with no shipments; raises no error codes
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:09:18
+@@ -14,6 +14,27 @@
+     return counts
+ 
+ 
++def _volume_tier(shipment_count):
++    # Same thresholds as parcelo.legacy.billing.volume_tier; kept local because
++    # the legacy package is scheduled for deletion.
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 02:09:24
+@@ -0,0 +1,43 @@
++from parcelo import customers, reports, shipments, store
++from parcelo.models import Shipment
++
++
++def _add_shipments(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.volume_report() == {}
++
++
++def test_customer_without_shipments_is_included_as_starter():
++    c = customers.add_customer("Acme")
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_tier_boundaries():
++    cases = {9: "starter", 10: "regular", 49: "regular", 50: "bulk"}
++    for count, tier in cases.items():
++        store.reset()
++        c = customers.add_customer("Acme")
++        _add_shipments(c.id, count)
++        assert reports.volume_report()[c.id] == {"shipments": count, "tier": tier}
++
++
++def test_counts_are_per_customer():
++    a = customers.add_customer("A")
++    b = customers.add_customer("B")
++    _add_shipments(a.id, 3)
++    _add_shipments(b.id, 12)
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 12, "tier": "regular"}
++
++
++def test_shipment_for_unknown_customer_is_ignored():
++    c = customers.add_customer("Acme")
++    store.db.shipments["shp_orphan"] = Shipment(
++        id="shp_orphan", customer_id="cus_missing", weight_kg=1.0, zone="local"
++    )
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}

@@ -1,0 +1,179 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:42:19
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## vouchers
++
++- `vouchers.issue_voucher(customer_id, amount)`: issue a goodwill voucher (amount must be positive, at most 150.00)
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:42:21
+@@ -1,6 +1,8 @@
+ from dataclasses import dataclass, field
+ 
++from parcelo.money import Money
+ 
++
+ @dataclass
+ class Customer:
+     id: str
+@@ -30,3 +32,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Voucher:
++    id: str
++    customer_id: str
++    amount: Money
++    issued_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:42:22
+@@ -0,0 +1,5 @@
++"""Business constants for parcelo. Finance edits this file; feature modules import from here."""
++
++from parcelo.money import Money
++
++VOUCHER_MAX_AMOUNT = Money.parse("150.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 02:42:17
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.vouchers = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.vouchers.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/vouchers.py b/parcelo/vouchers.py
+--- a/parcelo/vouchers.py	1969-12-31 19:00:00
++++ b/parcelo/vouchers.py	2026-11-12 02:42:24
+@@ -0,0 +1,37 @@
++from parcelo import clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.money import Money
++from parcelo.settings import VOUCHER_MAX_AMOUNT
++from parcelo.store import db
++
++
++def issue_voucher(customer_id, amount):
++    """Issue a goodwill voucher to an existing customer.
++
++    Raises E_NOT_FOUND for an unknown customer, E_BAD_INPUT for a missing,
++    unparseable, zero or negative amount, and E_LIMIT for an amount above
++    VOUCHER_MAX_AMOUNT. Nothing is stored or emitted on error.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", f"unknown customer {customer_id}")
++    if amount is None:
++        raise DomainError("E_BAD_INPUT", "amount required")
++    try:
++        value = Money.parse(amount)
++    except (ArithmeticError, TypeError, ValueError):
++        raise DomainError("E_BAD_INPUT", f"bad amount {amount!r}")
++    if value <= Money.zero():
++        raise DomainError("E_BAD_INPUT", "amount must be positive")
++    if VOUCHER_MAX_AMOUNT < value:
++        raise DomainError("E_LIMIT", f"voucher cannot exceed {VOUCHER_MAX_AMOUNT}")
++
++    voucher = Voucher(
++        id=ids.new_id("vch"),
++        customer_id=customer_id,
++        amount=value,
++        issued_at=clock.now(),
++    )
++    db.vouchers[voucher.id] = voucher
++    events.emit("voucher.issued", voucher.id, customer_id=customer_id, amount=str(value))
++    return voucher
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_vouchers.py b/tests/unit/test_vouchers.py
+--- a/tests/unit/test_vouchers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_vouchers.py	2026-11-12 02:42:29
+@@ -0,0 +1,87 @@
++import re
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, events, store
++from parcelo.errors import DomainError
++from parcelo.models import Customer, Voucher
++from parcelo.money import Money
++from parcelo.settings import VOUCHER_MAX_AMOUNT
++from parcelo.store import db
++from parcelo.vouchers import issue_voucher
++
++MOMENT = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++
++
++@pytest.fixture
++def customer():
++    db.customers["C1"] = Customer(id="C1", name="Ann")
++    clock.set_fixed(MOMENT)
++    return "C1"
++
++
++def test_issue_returns_voucher_with_fields(customer):
++    voucher = issue_voucher(customer, "25.00")
++    assert isinstance(voucher, Voucher)
++    assert re.fullmatch(r"vch_\d{6}", voucher.id)
++    assert voucher.customer_id == customer
++    assert voucher.amount == Money.parse("25.00")
++    assert voucher.issued_at == MOMENT
++
++
++def test_voucher_is_stored_in_vouchers(customer):
++    voucher = issue_voucher(customer, 10)
++    assert db.vouchers[voucher.id] is voucher
++
++
++def test_issue_emits_event(customer):
++    events.OUTBOX.clear()
++    voucher = issue_voucher(customer, 10)
++    assert events.OUTBOX[-1]["name"] == "voucher.issued"
++    assert events.OUTBOX[-1]["entity_id"] == voucher.id
++
++
++def test_amount_at_cap_is_allowed(customer):
++    voucher = issue_voucher(customer, VOUCHER_MAX_AMOUNT)
++    assert voucher.amount == Money.parse("150.00")
++
++
++def test_amount_above_cap_fails(customer):
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as exc:
++        issue_voucher(customer, "150.01")
++    assert exc.value.code == "E_LIMIT"
++    assert db.vouchers == {}
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("amount", [0, "0.00", -5, "-0.01"])
++def test_zero_or_negative_amount_fails(customer, amount):
++    with pytest.raises(DomainError) as exc:
++        issue_voucher(customer, amount)
++    assert exc.value.code == "E_BAD_INPUT"
++    assert db.vouchers == {}
++
++
++@pytest.mark.parametrize("amount", [None, "abc"])
++def test_missing_or_unparseable_amount_fails(customer, amount):
++    with pytest.raises(DomainError) as exc:
++        issue_voucher(customer, amount)
++    assert exc.value.code 

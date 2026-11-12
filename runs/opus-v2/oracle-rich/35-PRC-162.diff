@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:18:44
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-162] invoices: list invoices by status
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:18:44
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## invoices
++
++- `invoices.invoices_by_status(status)`: invoices in status "open" or "paid", sorted by id
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:18:44
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,16 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++INVOICE_QUERY_STATUSES = ("open", "paid")
++
++
++def invoices_by_status(status):
++    """Return invoices in ``status`` ("open" or "paid"), sorted by id."""
++    if status not in INVOICE_QUERY_STATUSES:
++        raise DomainError("E_BAD_INPUT", f"unknown invoice status {status!r}")
++    return sorted(
++        (i for i in db.invoices.values() if i.status == status),
++        key=lambda i: i.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_by_status.py b/tests/unit/test_invoices_by_status.py
+--- a/tests/unit/test_invoices_by_status.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_by_status.py	2026-11-12 02:18:44
+@@ -0,0 +1,30 @@
++import pytest
++
++from parcelo import invoices
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _add(inv_id, status):
++    db.invoices[inv_id] = Invoice(id=inv_id, shipment_id="shp_1", amount=10.0, status=status)
++
++
++def test_returns_matching_sorted_by_id():
++    _add("inv_3", "open")
++    _add("inv_1", "open")
++    _add("inv_2", "paid")
++    assert [i.id for i in invoices.invoices_by_status("open")] == ["inv_1", "inv_3"]
++    assert [i.id for i in invoices.invoices_by_status("paid")] == ["inv_2"]
++
++
++def test_empty_when_none():
++    _add("inv_1", "open")
++    assert invoices.invoices_by_status("paid") == []
++
++
++@pytest.mark.parametrize("status", ["void", "", None, "OPEN"])
++def test_invalid_status(status):
++    with pytest.raises(DomainError) as err:
++        invoices.invoices_by_status(status)
++    assert err.value.code == "E_BAD_INPUT"

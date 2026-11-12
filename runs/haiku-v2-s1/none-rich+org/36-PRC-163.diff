@@ -1,0 +1,27 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:17:14
+@@ -20,6 +20,12 @@
+     return db.customers[customer_id]
+ 
+ 
++def lock_customer(customer_id):
++    customer = db.customers[customer_id]  # raises KeyError if unknown
++    customer.locked = True
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:17:14
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass

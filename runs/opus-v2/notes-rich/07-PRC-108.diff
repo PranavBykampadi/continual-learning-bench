@@ -1,0 +1,124 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:00:02
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: outstanding balances by customer (PRC-108)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:00:00
+@@ -1,8 +1,11 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
+ 
++OPEN_STATUS = "open"
+ 
++
+ def revenue_total():
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+@@ -22,3 +25,21 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def outstanding_by_customer():
++    """Map every customer id to the total of its open invoices as Money.
++
++    Customers with nothing open map to Money.zero(). Paid, void and any other
++    non-open invoices are excluded. Invoices whose shipment or customer no
++    longer exists are skipped.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != OPEN_STATUS:
++            continue
++        shipment = db.shipments.get(invoice.shipment_id)
++        if shipment is None or shipment.customer_id not in totals:
++            continue
++        totals[shipment.customer_id] = totals[shipment.customer_id] + Money.parse(invoice.amount)
++    return totals
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_outstanding_by_customer.py b/tests/unit/test_reports_outstanding_by_customer.py
+--- a/tests/unit/test_reports_outstanding_by_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_outstanding_by_customer.py	2026-11-12 02:00:09
+@@ -0,0 +1,72 @@
++import pytest
++
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _issue(customer_id, weight=2, zone="local"):
++    s = shipments.create_shipment(customer_id, weight, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_customer_without_invoices_owes_zero():
++    c = customers.add_customer("Acme")
++    assert reports.outstanding_by_customer() == {c.id: Money.zero()}
++
++
++def test_sums_open_invoices_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    _issue(a.id, 2, "local")  # 4.50 + 2.50 = 7.00
++    _issue(a.id, 1, "national")  # 9.00 + 1.25 = 10.25
++    _issue(b.id, 4, "international")  # 24.00 + 5.00 = 29.00
++    assert reports.outstanding_by_customer() == {
++        a.id: Money(1725),
++        b.id: Money(2900),
++    }
++
++
++@pytest.mark.parametrize("status", ["paid", "void"])
++def test_closed_invoices_excluded(status):
++    c = customers.add_customer("Acme")
++    _issue(c.id, 2, "local")
++    closed = _issue(c.id, 1, "national")
++    closed.status = status
++    assert reports.outstanding_by_customer() == {c.id: Money(700)}
++
++
++def test_mark_paid_flow_removes_balance():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 2, "local")
++    invoices.mark_paid(inv.id)
++    assert reports.outstanding_by_customer() == {c.id: Money.zero()}
++
++
++def test_float_amounts_summed_exactly():
++    c = customers.add_customer("Acme")
++    for _ in range(3):
++        _issue(c.id, 0.08, "local")  # 4.50 + 0.10 = 4.60
++    result = reports.outstanding_by_customer()
++    assert result[c.id] == Money(1380)
++    assert isinstance(result[c.id], Money)
++
++
++def test_orphan_invoice_skipped():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id)
++    del db.shipments[inv.shipment_id]
++    assert reports.outstanding_by_customer() == {c.id: Money.zero()}
++
++
++def test_read_only():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id)
++    log_len = len(audit.LOG)
++    reports.outstanding_by_customer()
++    assert inv.status == "open"
++    assert len(audit.LOG) == log_len

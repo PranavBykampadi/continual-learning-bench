@@ -1,0 +1,24 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:08:33
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,12 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++VALID_STATUSES = ("open", "paid")
++
++
++def invoices_by_status(status):
++    if status not in VALID_STATUSES:
++        raise DomainError("E_BAD_INPUT", f"invalid invoice status {status!r}")
++    return [i for i in db.invoices.values() if i.status == status]

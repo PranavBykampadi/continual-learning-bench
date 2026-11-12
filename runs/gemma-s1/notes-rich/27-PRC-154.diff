@@ -1,0 +1,110 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 01:41:26
+@@ -1,12 +1,2 @@
+-# Changelog
+-
+ ## Unreleased
+-
+-- shipments: validate zone on create (PRC-088)
+-- platform: add events outbox (PRC-140)
+-- Added gold tier
+-
+-## 0.4.0
+-
+-- invoices: issue invoice for a shipment
+-- reports: daily summary
++- customers: add reactivate_customer (PRC-154)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:41:24
+@@ -1,17 +1,4 @@
+-# parcelo API
+-
+-Functions other teams call from their own services. Last reviewed for 0.4.0.
+-
+-## customers
+-
+-- `customers.add_customer(name, tier="standard")`: create a customer
+-- `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+-
+-## shipments
+-
+-- `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
+-
+-## rates
+-
+-- `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `parcelo.customers.add_customer(name, tier="standard")`: creates a new customer.
++- `parcelo.customers.get_customer(customer_id)`: retrieves a customer by ID.
++- `parcelo.customers.reactivate_customer(customer_id)`: sets the customer's active flag to True and returns the customer.
++- `parcelo.customers.outstanding_balance(customer_id)`: calculates the total open invoice balance for a customer.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 01:41:02
+@@ -2,6 +2,8 @@
+ 
+ from parcelo.models import Customer
+ from parcelo.store import db
++from parcelo.errors import DomainError
++from parcelo.events import emit
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -18,6 +20,18 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def reactivate_customer(customer_id):
++    customer = db.customers.get(customer_id)
++    if not customer:
++        raise DomainError("E_UNKNOWN_CUSTOMER", f"Customer {customer_id} not found")
++    
++    if not customer.active:
++        customer.active = True
++        emit("customer_reactivated", customer_id)
++        
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 01:41:16
+@@ -0,0 +1,33 @@
++import pytest
++from parcelo.store import reset
++from parcelo.customers import add_customer, reactivate_customer
++from parcelo.errors import DomainError
++from parcelo.events import OUTBOX
++
++def test_reactivate_customer_success():
++    reset()
++    customer = add_customer("Test Customer")
++    customer.active = False
++    
++    reactivate_customer(customer.id)
++    
++    assert customer.active is True
++    assert any(e["name"] == "customer_reactivated" and e["entity_id"] == customer.id for e in OUTBOX)
++
++def test_reactivate_customer_idempotent():
++    reset()
++    customer = add_customer("Test Customer")
++    customer.active = True
++    
++    OUTBOX.clear()
++    reactivate_customer(customer.id)
++    
++    assert customer.active is True
++    assert len(OUTBOX) == 0
++
++def test_reactivate_customer_not_found():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        reactivate_customer("C_NON_EXISTENT")
++    
++    assert excinfo.value.code == "E_UNKNOWN_CUSTOMER"

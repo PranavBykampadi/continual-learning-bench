@@ -1,0 +1,167 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:00:09
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-166] invoices: escalate large unpaid invoices
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:00:01
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.escalate_invoice(invoice_id)`: escalate a large unpaid invoice to the collections team
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 01:57:24
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_INELIGIBLE_FOR_ESCALATION",
+ }
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:57:50
+@@ -4,6 +4,10 @@
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
++from parcelo.money import Money
++from parcelo.errors import DomainError
++from parcelo.events import emit
++from parcelo.settings import ESCALATION_THRESHOLD
+ 
+ 
+ def issue_invoice(shipment_id):
+@@ -32,3 +36,27 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def escalate_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", f"Invoice {invoice_id} not found")
++
++    invoice = db.invoices[invoice_id]
++
++    if invoice.status == "escalated":
++        return invoice
++
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", "Only open invoices can be escalated")
++
++    amount = Money.parse(invoice.amount)
++    threshold = Money.parse(ESCALATION_THRESHOLD)
++
++    if amount < threshold:
++        raise DomainError("E_INELIGIBLE_FOR_ESCALATION", f"Invoice amount {amount} is below threshold {threshold}")
++
++    invoice.status = "escalated"
++    emit("invoice_escalated", invoice.id)
++
++    return invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 01:57:14
+@@ -0,0 +1 @@
++ESCALATION_THRESHOLD = 500.00
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_escalate_invoice.py b/tests/unit/test_escalate_invoice.py
+--- a/tests/unit/test_escalate_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_escalate_invoice.py	2026-11-12 01:59:47
+@@ -0,0 +1,83 @@
++import pytest
++from parcelo.store import db, reset
++from parcelo.models import Invoice
++from parcelo.invoices import escalate_invoice
++from parcelo.errors import DomainError
++import parcelo.events
++
++def test_escalate_invoice_success(monkeypatch):
++    reset()
++    events = []
++    def mock_emit(name, entity_id, **kwargs):
++        events.append((name, entity_id))
++    
++    # Patch in the module where it is imported/used
++    monkeypatch.setattr("parcelo.invoices.emit", mock_emit)
++    
++    invoice_id = "INV-123"
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="SHIP-1",
++        amount=500.00,
++        status="open"
++    )
++    
++    result = escalate_invoice(invoice_id)
++    
++    assert result.status == "escalated"
++    assert ("invoice_escalated", invoice_id) in events
++
++def test_escalate_invoice_not_found():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        escalate_invoice("NON-EXISTENT")
++    assert excinfo.value.code == "E_NOT_FOUND"
++
++def test_escalate_invoice_too_small():
++    reset()
++    invoice_id = "INV-123"
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="SHIP-1",
++        amount=499.99,
++        status="open"
++    )
++    
++    with pytest.raises(DomainError) as excinfo:
++        escalate_invoice(invoice_id)
++    assert excinfo.value.code == "E_INELIGIBLE_FOR_ESCALATION"
++
++def test_escalate_invoice_wrong_status():
++    reset()
++    invoice_id = "INV-123"
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="SHIP-1",
++        amount=600.00,
++        status="paid"
++    )
++    
++    with pytest.raises(DomainError) as excinfo:
++        escalate_invoice(invoice_id)
++    assert excinfo.value.code == "E_BAD_STATE"
++
++def test_escalate_invoice_idempotency(monkeypatch):
++    reset()
++    events = []
++    def mock_emit(name, entity_id, **kwargs):
++        events.append((name, entity_id))
++    
++    monkeypatch.setattr("parcelo.invoices.emit", mock_emit)
++    
++    invoice_id = "INV-123"
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="SHIP-1",
++        amount=600.00,
++        status="escalated"
++    )
++    
++    result = escalate_invoice(invoice_id)
++    
++    assert result.status == "escalated"
++    assert len(events) == 0

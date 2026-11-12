@@ -1,0 +1,107 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:31:59
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-162] invoices: list invoices by status (`invoices_by_status`)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:32:01
+@@ -15,3 +15,8 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.invoices_by_status(status)`: list of `Invoice` objects whose status equals `status`, in the order they were issued; returns an empty list if none match. Valid `status` values are `settings.INVOICE_QUERY_STATUSES` = `("open", "paid")`, matched exactly (case-sensitive). Idempotent (read-only, emits no event). Applies no limits or rounding; invoice amounts are returned as stored.
++  - `E_BAD_INPUT`: `status` is not one of `settings.INVOICE_QUERY_STATUSES`
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:31:57
+@@ -1,8 +1,10 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
++from parcelo.settings import INVOICE_QUERY_STATUSES
+ from parcelo.store import db
+ 
+ 
+@@ -32,3 +34,15 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def invoices_by_status(status):
++    """Return invoices whose status is ``status``, in issue order.
++
++    Read-only: emits no event. Returns an empty list if none match.
++    Raises DomainError("E_BAD_INPUT") if ``status`` is not one of
++    settings.INVOICE_QUERY_STATUSES.
++    """
++    if status not in INVOICE_QUERY_STATUSES:
++        raise DomainError("E_BAD_INPUT", repr(status))
++    return [i for i in db.invoices.values() if i.status == status]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:31:50
+@@ -0,0 +1,4 @@
++"""Service-wide thresholds, rates, limits and allowed value sets."""
++
++# Invoice statuses that may be queried via invoices.invoices_by_status.
++INVOICE_QUERY_STATUSES = ("open", "paid")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices_by_status.py b/tests/test_invoices_by_status.py
+--- a/tests/test_invoices_by_status.py	1969-12-31 19:00:00
++++ b/tests/test_invoices_by_status.py	2026-11-12 02:32:05
+@@ -0,0 +1,42 @@
++import pytest
++
++from parcelo import customers, events, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _issue(n=1):
++    c = customers.add_customer("Acme")
++    out = []
++    for _ in range(n):
++        s = shipments.create_shipment(c.id, 2, "local")
++        out.append(invoices.issue_invoice(s.id))
++    return out
++
++
++def test_open_and_paid_filtered_in_issue_order():
++    a, b, c = _issue(3)
++    b.status = "paid"
++    assert invoices.invoices_by_status("open") == [a, c]
++    assert invoices.invoices_by_status("paid") == [b]
++
++
++def test_empty_list_when_none_match():
++    assert invoices.invoices_by_status("open") == []
++    _issue(1)
++    assert invoices.invoices_by_status("paid") == []
++
++
++def test_read_only_no_event_and_repeatable():
++    _issue(2)
++    before = list(events.OUTBOX)
++    first = invoices.invoices_by_status("open")
++    second = invoices.invoices_by_status("open")
++    assert first == second
++    assert events.OUTBOX == before
++
++
++@pytest.mark.parametrize("status", ["void", "OPEN", "Paid", "", None])
++def test_invalid_status_rejected(status):
++    with pytest.raises(DomainError) as err:
++        invoices.invoices_by_status(status)
++    assert err.value.code == "E_BAD_INPUT"

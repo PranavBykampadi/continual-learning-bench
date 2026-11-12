@@ -1,0 +1,86 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:21:30
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- shipments: list shipments by zone (PRC-159)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:21:31
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.shipments_in_zone(zone)`: list shipments going to a zone; returns a list of shipments (empty if none); raises `E_BAD_INPUT` for a non-string, empty, or unknown zone; read-only and idempotent
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:21:24
+@@ -28,3 +28,11 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def shipments_in_zone(zone):
++    if not isinstance(zone, str) or not zone:
++        raise DomainError("E_BAD_INPUT", repr(zone))
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_INPUT", zone)
++    return [s for s in db.shipments.values() if s.zone == zone]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_shipments.py b/tests/test_shipments.py
+--- a/tests/test_shipments.py	1969-12-31 19:00:00
++++ b/tests/test_shipments.py	2026-11-12 02:21:28
+@@ -0,0 +1,45 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++
++
++def test_shipments_in_zone_returns_matching_shipments():
++    c = customers.add_customer("Acme")
++    a = shipments.create_shipment(c.id, 1.0, "local")
++    shipments.create_shipment(c.id, 2.0, "national")
++    b = shipments.create_shipment(c.id, 3.0, "local")
++    result = shipments.shipments_in_zone("local")
++    assert result == [a, b]
++
++
++def test_shipments_in_zone_empty_when_none_match():
++    c = customers.add_customer("Acme")
++    shipments.create_shipment(c.id, 1.0, "local")
++    assert shipments.shipments_in_zone("international") == []
++
++
++def test_shipments_in_zone_empty_when_no_shipments():
++    assert shipments.shipments_in_zone("national") == []
++
++
++def test_shipments_in_zone_does_not_emit_events():
++    c = customers.add_customer("Acme")
++    shipments.create_shipment(c.id, 1.0, "local")
++    events.OUTBOX.clear()
++    shipments.shipments_in_zone("local")
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("zone", ["moon", "LOCAL", " local", ""])
++def test_shipments_in_zone_unknown_zone(zone):
++    with pytest.raises(DomainError) as exc:
++        shipments.shipments_in_zone(zone)
++    assert exc.value.code == "E_BAD_INPUT"
++
++
++@pytest.mark.parametrize("zone", [None, 0, 1.5, ["local"], ("local",), {"local": 1}])
++def test_shipments_in_zone_bad_type(zone):
++    with pytest.raises(DomainError) as exc:
++        shipments.shipments_in_zone(zone)
++    assert exc.value.code == "E_BAD_INPUT"

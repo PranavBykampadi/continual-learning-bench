@@ -1,0 +1,146 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:01:45
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- invoices: apply a credit to an open invoice (PRC-113)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:01:45
+@@ -1,7 +1,10 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +35,36 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def apply_credit(invoice_id, amount):
++    """Reduce an open invoice by a credit and return the remaining amount as Money.
++
++    ``amount`` may be Money or a dollar value (converted with ``Money.parse``).
++    The invoice's stored ``amount`` stays a dollar float so existing reports and
++    customer balances keep working; it is derived from exact integer cents.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is {invoice.status}")
++    try:
++        credit = Money.parse(amount)
++    except Exception:
++        raise DomainError("E_BAD_INPUT", f"invalid credit amount {amount!r}")
++    if credit.cents <= 0:
++        raise DomainError("E_BAD_INPUT", f"credit must be positive, got {credit}")
++    current = Money.parse(invoice.amount)
++    if current < credit:
++        raise DomainError("E_LIMIT", f"credit {credit} exceeds invoice amount {current}")
++    remaining = current - credit
++    # Legacy float field: keep the existing type for reports/customers.
++    invoice.amount = remaining.cents / 100
++    audit.record(
++        "invoice.credit_applied",
++        invoice.id,
++        credit_cents=credit.cents,
++        remaining_cents=remaining.cents,
++    )
++    return remaining
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoice_credits.py b/tests/unit/test_invoice_credits.py
+--- a/tests/unit/test_invoice_credits.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoice_credits.py	2026-11-12 02:01:45
+@@ -0,0 +1,80 @@
++import pytest
++
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++def _invoice(weight=2, zone="local"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, weight, zone)
++    return c, invoices.issue_invoice(s.id)  # local, 2kg -> 7.00
++
++
++def test_apply_credit_reduces_amount_and_returns_money():
++    _, inv = _invoice()
++    remaining = invoices.apply_credit(inv.id, Money(150))
++    assert remaining == Money(550)
++    assert inv.amount == 5.5
++
++
++def test_apply_credit_accepts_float_amount():
++    _, inv = _invoice()
++    assert invoices.apply_credit(inv.id, 0.1) == Money(690)
++    assert invoices.apply_credit(inv.id, 0.2) == Money(670)
++    assert inv.amount == 6.7
++
++
++def test_apply_full_credit_leaves_zero():
++    _, inv = _invoice()
++    assert invoices.apply_credit(inv.id, Money(700)) == Money.zero()
++    assert inv.amount == 0
++
++
++def test_balance_and_reports_reflect_credit():
++    c, inv = _invoice()
++    invoices.apply_credit(inv.id, Money(200))
++    assert customers.outstanding_balance(c.id) == 5.0
++    invoices.mark_paid(inv.id)
++    assert reports.revenue_total() == 5.0
++
++
++def test_apply_credit_records_audit():
++    _, inv = _invoice()
++    invoices.apply_credit(inv.id, Money(100))
++    entry = audit.LOG[-1]
++    assert entry["action"] == "invoice.credit_applied"
++    assert entry["entity_id"] == inv.id
++    assert entry["details"] == {"credit_cents": 100, "remaining_cents": 600}
++
++
++def test_unknown_invoice():
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit("nope", Money(100))
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_paid_invoice_rejected():
++    _, inv = _invoice()
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, Money(100))
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.amount == 7.0
++
++
++def test_credit_larger_than_amount_rejected():
++    _, inv = _invoice()
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, Money(701))
++    assert err.value.code == "E_LIMIT"
++    assert inv.amount == 7.0
++
++
++@pytest.mark.parametrize("bad", [Money(0), Money(-100), "abc"])
++def test_invalid_credit_rejected(bad):
++    _, inv = _invoice()
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, bad)
++    assert err.value.code == "E_BAD_INPUT"
++    assert inv.amount == 7.0

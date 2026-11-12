@@ -1,0 +1,102 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:09:55
+@@ -1,11 +1,15 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import volume_tier
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+ 
++REBATE_RATES = {"starter": 0.0, "regular": 0.03, "bulk": 0.06}
+ 
++
+ def add_customer(name, tier="standard"):
+     if tier not in TIERS:
+         raise ValueError("bad tier")
+@@ -18,6 +22,32 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned by a customer, based on paid invoices.
++
++    Tiers follow ``volume_tier``: 10+ shipments earns 3% of total paid
++    invoices, 50+ shipments earns 6%; fewer than 10 earns nothing.
++    Raises DomainError if the customer does not exist.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++
++    shipment_ids = set()
++    shipment_count = 0
++    for shipment in db.shipments.values():
++        if shipment.customer_id == customer_id:
++            shipment_ids.add(shipment.id)
++            shipment_count += 1
++
++    paid_total = 0.0
++    for invoice in db.invoices.values():
++        if invoice.shipment_id in shipment_ids and invoice.status == "paid":
++            paid_total += invoice.amount
++
++    rate = REBATE_RATES[volume_tier(shipment_count)]
++    return round(paid_total * rate, 2)
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers_rebate.py b/tests/test_customers_rebate.py
+--- a/tests/test_customers_rebate.py	1969-12-31 19:00:00
++++ b/tests/test_customers_rebate.py	2026-11-12 02:09:58
+@@ -0,0 +1,46 @@
++import pytest
++
++from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _paid_shipments(customer_id, count, zone="local", weight=2):
++    for _ in range(count):
++        s = shipments.create_shipment(customer_id, weight, zone)
++        inv = invoices.issue_invoice(s.id)
++        invoices.mark_paid(inv.id)
++
++
++def test_no_rebate_under_ten_shipments():
++    c = customers.add_customer("Acme")
++    _paid_shipments(c.id, 9)
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_three_percent_at_ten_shipments():
++    c = customers.add_customer("Acme")
++    _paid_shipments(c.id, 10)
++    paid = 10 * 7.0
++    assert customers.rebate_for(c.id) == round(paid * 0.03, 2)
++
++
++def test_six_percent_at_fifty_shipments():
++    c = customers.add_customer("Acme")
++    _paid_shipments(c.id, 50)
++    paid = 50 * 7.0
++    assert customers.rebate_for(c.id) == round(paid * 0.06, 2)
++
++
++def test_unpaid_invoices_do_not_count():
++    c = customers.add_customer("Acme")
++    _paid_shipments(c.id, 10)
++    for _ in range(5):
++        s = shipments.create_shipment(c.id, 2, "local")
++        invoices.issue_invoice(s.id)
++    # 15 shipments -> regular tier, but only the 10 paid invoices add to the total
++    assert customers.rebate_for(c.id) == round(10 * 7.0 * 0.03, 2)
++
++
++def test_unknown_customer_raises():
++    with pytest.raises(DomainError):
++        customers.rebate_for("C-does-not-exist")

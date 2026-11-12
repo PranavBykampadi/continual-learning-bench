@@ -1,0 +1,157 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:16:06
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: add `needs_review` flag for accounts with many or large open invoices (PRC-153)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:16:05
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.needs_review(customer_id)`: True if the customer has more than 3 open invoices or open invoices totalling over 250.00
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:15:58
+@@ -1,6 +1,9 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
++from parcelo.settings import MAX_OPEN_INVOICES_FOR_REVIEW, REVIEW_OPEN_BALANCE_LIMIT
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +30,32 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id: str) -> bool:
++    """Return True if the customer's open invoices need a manual look.
++
++    A customer needs review when they have more than
++    MAX_OPEN_INVOICES_FOR_REVIEW open invoices, or when the total of their
++    open invoices is over REVIEW_OPEN_BALANCE_LIMIT.
++
++    Args:
++        customer_id: ID of the customer to check.
++
++    Returns:
++        True if the customer needs a manual review, otherwise False.
++
++    Raises:
++        DomainError: With code E_UNKNOWN_CUSTOMER if the customer does not exist.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    open_count = 0
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            open_count += 1
++    if open_count > MAX_OPEN_INVOICES_FOR_REVIEW:
++        return True
++    balance = Money.parse(outstanding_balance(customer_id))
++    return REVIEW_OPEN_BALANCE_LIMIT < balance
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:15:55
+@@ -0,0 +1,9 @@
++"""Business thresholds and limits. Finance and product may ask us to change these."""
++
++from parcelo.money import Money
++
++# A customer with more than this many open invoices needs a manual review.
++MAX_OPEN_INVOICES_FOR_REVIEW = 3
++
++# A customer whose open invoices total more than this needs a manual review.
++REVIEW_OPEN_BALANCE_LIMIT = Money.parse("250.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_review.py b/tests/unit/test_customers_review.py
+--- a/tests/unit/test_customers_review.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_review.py	2026-11-12 02:16:04
+@@ -0,0 +1,72 @@
++import pytest
++
++from parcelo import customers, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _add_invoice(customer_id, amount, status="open"):
++    shipment = shipments.create_shipment(customer_id, 1, "local")
++    invoice = Invoice(
++        id=f"INV-{len(db.invoices)}",
++        shipment_id=shipment.id,
++        amount=amount,
++        status=status,
++    )
++    db.invoices[invoice.id] = invoice
++
++
++def test_no_invoices_does_not_need_review():
++    c = customers.add_customer("Acme")
++    assert customers.needs_review(c.id) is False
++
++
++def test_three_open_invoices_does_not_need_review():
++    c = customers.add_customer("Acme")
++    for _ in range(3):
++        _add_invoice(c.id, 10.0)
++    assert customers.needs_review(c.id) is False
++
++
++def test_more_than_three_open_invoices_needs_review():
++    c = customers.add_customer("Acme")
++    for _ in range(4):
++        _add_invoice(c.id, 1.0)
++    assert customers.needs_review(c.id) is True
++
++
++def test_paid_invoices_do_not_count_towards_open_limit():
++    c = customers.add_customer("Acme")
++    for _ in range(3):
++        _add_invoice(c.id, 1.0)
++    for _ in range(3):
++        _add_invoice(c.id, 1.0, status="paid")
++    assert customers.needs_review(c.id) is False
++
++
++def test_open_balance_exactly_at_limit_does_not_need_review():
++    c = customers.add_customer("Acme")
++    _add_invoice(c.id, 250.00)
++    assert customers.needs_review(c.id) is False
++
++
++def test_open_balance_over_limit_needs_review():
++    c = customers.add_customer("Acme")
++    _add_invoice(c.id, 200.00)
++    _add_invoice(c.id, 50.01)
++    assert customers.needs_review(c.id) is True
++
++
++def test_other_customers_invoices_are_ignored():
++    c = customers.add_customer("Acme")
++    other = customers.add_customer("Other")
++    for _ in range(4):
++        _add_invoice(other.id, 100.0)
++    assert customers.needs_review(c.id) is False
++
++
++def test_unknown_customer_raises():
++    with pytest.raises(DomainError) as err:
++        customers.needs_review("nope")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"

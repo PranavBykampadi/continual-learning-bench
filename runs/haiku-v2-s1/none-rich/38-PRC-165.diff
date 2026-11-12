@@ -1,0 +1,50 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:11:51
+@@ -14,6 +14,11 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    invoiced = {i.shipment_id for i in db.invoices.values()}
++    return [s for s in db.shipments.values() if s.id not in invoiced]
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 02:11:52
+@@ -0,0 +1,31 @@
++from parcelo import reports
++from parcelo.models import Invoice, Shipment
++from parcelo.store import db
++
++
++def _shipment(sid):
++    return Shipment(id=sid, customer_id="C1", weight_kg=1.0, zone="A")
++
++
++def test_shipments_without_invoice_returns_uninvoiced_only():
++    db.shipments["S1"] = _shipment("S1")
++    db.shipments["S2"] = _shipment("S2")
++    db.invoices["I1"] = Invoice(id="I1", shipment_id="S1", amount=10.0)
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == ["S2"]
++
++
++def test_shipments_without_invoice_empty_when_all_invoiced():
++    db.shipments["S1"] = _shipment("S1")
++    db.invoices["I1"] = Invoice(id="I1", shipment_id="S1", amount=10.0)
++
++    assert reports.shipments_without_invoice() == []
++
++
++def test_shipments_without_invoice_all_when_no_invoices():
++    db.shipments["S1"] = _shipment("S1")
++    db.shipments["S2"] = _shipment("S2")
++
++    assert [s.id for s in reports.shipments_without_invoice()] == ["S1", "S2"]

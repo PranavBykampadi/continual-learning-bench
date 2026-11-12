@@ -1,0 +1,72 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:11:15
+@@ -1,5 +1,7 @@
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +14,24 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def volume_report():
++    """Shipment count and volume tier for every customer, keyed by customer id."""
++    known_ids = {customer.id for customer in db.customers.values()}
++    counts = {customer_id: 0 for customer_id in known_ids}
++    for shipment in db.shipments.values():
++        if shipment.customer_id not in known_ids:
++            # Fail loudly rather than silently dropping the shipment from the report.
++            raise DomainError(
++                "E_UNKNOWN_CUSTOMER",
++                "a shipment refers to a customer that does not exist",
++            )
++        counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 02:11:24
+@@ -0,0 +1,32 @@
++import pytest
++
++from parcelo import customers, reports, shipments
++
++
++def test_volume_report_includes_customers_without_shipments():
++    c = customers.add_customer("Acme")
++    report = reports.volume_report()
++    assert report == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_volume_report_counts_shipments_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    for _ in range(2):
++        shipments.create_shipment(a.id, 1.0, "local")
++    shipments.create_shipment(b.id, 3.0, "national")
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 2, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++@pytest.mark.parametrize(
++    "count, tier",
++    [(9, "starter"), (10, "regular"), (49, "regular"), (50, "bulk")],
++)
++def test_volume_report_tier_thresholds(count, tier):
++    c = customers.add_customer("Acme")
++    for _ in range(count):
++        shipments.create_shipment(c.id, 1.0, "local")
++    assert reports.volume_report()[c.id] == {"shipments": count, "tier": tier}
++

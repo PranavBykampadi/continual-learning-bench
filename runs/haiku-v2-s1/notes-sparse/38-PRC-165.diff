@@ -1,0 +1,50 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:29:00
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: add shipments_without_invoice for billing
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:28:59
+@@ -14,6 +14,11 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    invoiced_ids = {i.shipment_id for i in db.invoices.values()}
++    return [s for s in db.shipments.values() if s.id not in invoiced_ids]
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:29:00
+@@ -0,0 +1,20 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def test_shipments_without_invoice_returns_only_uninvoiced():
++    c = customers.add_customer("Acme")
++    invoiced = shipments.create_shipment(c.id, 2, "local")
++    uninvoiced = shipments.create_shipment(c.id, 3, "local")
++    invoices.issue_invoice(invoiced.id)
++
++    result = reports.shipments_without_invoice()
++
++    assert result == [uninvoiced]
++
++
++def test_shipments_without_invoice_empty_when_all_invoiced():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []

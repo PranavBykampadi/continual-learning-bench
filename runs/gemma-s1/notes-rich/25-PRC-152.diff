@@ -1,0 +1,93 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 01:37:45
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: add mark_lost (PRC-152)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:37:38
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_lost(shipment_id)`: mark a shipment as lost
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 01:36:42
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_SHIPMENT_DELIVERED",
+ }
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 01:37:02
+@@ -28,3 +28,13 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_lost(shipment_id):
++    shipment = get_shipment(shipment_id)
++    if shipment.status == "delivered":
++        raise DomainError("E_SHIPMENT_DELIVERED", shipment_id)
++    
++    shipment.status = "lost"
++    events.emit("shipment.lost", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_lost.py b/tests/unit/test_mark_lost.py
+--- a/tests/unit/test_mark_lost.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_lost.py	2026-11-12 01:37:23
+@@ -0,0 +1,39 @@
++import pytest
++from parcelo import shipments, store
++from parcelo.errors import DomainError
++
++def test_mark_lost_success():
++    store.db.shipments.clear()
++    # Setup shipment
++    shipment = shipments.Shipment(
++        id="shp_000001", 
++        customer_id="cust_1", 
++        weight_kg=1.0, 
++        zone="ZONE1"
++    )
++    store.db.shipments[shipment.id] = shipment
++    
++    result = shipments.mark_lost("shp_000001")
++    assert result.status == "lost"
++    assert store.db.shipments["shp_000001"].status == "lost"
++
++def test_mark_lost_not_found():
++    store.db.shipments.clear()
++    with pytest.raises(DomainError) as excinfo:
++        shipments.mark_lost("nonexistent")
++    assert excinfo.value.code == "E_NOT_FOUND"
++
++def test_mark_lost_already_delivered():
++    store.db.shipments.clear()
++    shipment = shipments.Shipment(
++        id="shp_000002", 
++        customer_id="cust_1", 
++        weight_kg=1.0, 
++        zone="ZONE1",
++        status="delivered"
++    )
++    store.db.shipments[shipment.id] = shipment
++    
++    with pytest.raises(DomainError) as excinfo:
++        shipments.mark_lost("shp_000002")
++    assert excinfo.value.code == "E_SHIPMENT_DELIVERED"

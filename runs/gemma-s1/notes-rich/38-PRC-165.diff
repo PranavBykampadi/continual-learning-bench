@@ -1,0 +1,78 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:19:03
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: add shipments_without_invoice
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:18:47
+@@ -1,17 +1 @@
+-# parcelo API
+-
+-Functions other teams call from their own services. Last reviewed for 0.4.0.
+-
+-## customers
+-
+-- `customers.add_customer(name, tier="standard")`: create a customer
+-- `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+-
+-## shipments
+-
+-- `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
+-
+-## rates
+-
+-- `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `parcelo.reports.shipments_without_invoice()`: returns a list of shipments that have no associated invoice, sorted by ID.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:18:28
+@@ -22,3 +22,12 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    invoiced_shipment_ids = {i.shipment_id for i in db.invoices.values()}
++    shipments = [
++        s for s in db.shipments.values()
++        if s.id not in invoiced_shipment_ids
++    ]
++    return sorted(shipments, key=lambda x: x.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_prc165.py b/tests/unit/test_reports_prc165.py
+--- a/tests/unit/test_reports_prc165.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_prc165.py	2026-11-12 02:18:44
+@@ -0,0 +1,25 @@
++from parcelo.store import db
++from parcelo.reports import shipments_without_invoice
++from parcelo.models import Shipment, Invoice
++
++def test_shipments_without_invoice():
++    db.shipments.clear()
++    db.invoices.clear()
++    
++    s1 = Shipment(id="shp_001", customer_id="c1", weight_kg=1.0, zone="A")
++    s2 = Shipment(id="shp_002", customer_id="c1", weight_kg=2.0, zone="B")
++    s3 = Shipment(id="shp_003", customer_id="c2", weight_kg=3.0, zone="C")
++    
++    db.shipments[s1.id] = s1
++    db.shipments[s2.id] = s2
++    db.shipments[s3.id] = s3
++    
++    # Only s2 has an invoice
++    i1 = Invoice(id="inv_001", shipment_id="shp_002", amount=10.0)
++    db.invoices[i1.id] = i1
++    
++    result = shipments_without_invoice()
++    
++    assert len(result) == 2
++    assert result[0].id == "shp_001"
++    assert result[1].id == "shp_003"

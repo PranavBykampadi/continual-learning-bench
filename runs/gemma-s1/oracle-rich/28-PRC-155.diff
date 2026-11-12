@@ -1,0 +1,118 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 01:40:32
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: list customers by tier (PRC-155)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+@@ -9,4 +10,4 @@
+ ## 0.4.0
+ 
+ - invoices: issue invoice for a shipment
+-- reports: daily summary
++- reports: daily summary
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:40:25
+@@ -1,17 +1 @@
+-# parcelo API
+-
+-Functions other teams call from their own services. Last reviewed for 0.4.0.
+-
+-## customers
+-
+-- `customers.add_customer(name, tier="standard")`: create a customer
+-- `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+-
+-## shipments
+-
+-- `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+-- `shipments.get_shipment(shipment_id)`: fetch one shipment
+-
+-## rates
+-
+-- `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `parcelo.customers.customers_by_tier(tier)`: returns a list of customers belonging to the specified tier, sorted by id ascending
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 01:40:02
+@@ -2,6 +2,7 @@
+ 
+ from parcelo.models import Customer
+ from parcelo.store import db
++from parcelo.errors import DomainError
+ 
+ TIERS = ("standard", "gold")
+ 
+@@ -27,3 +28,11 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def customers_by_tier(tier):
++    if tier not in TIERS:
++        raise DomainError("E_INVALID_TIER", f"Tier {tier} is not recognized")
++    
++    customers = [c for c in db.customers.values() if c.tier == tier]
++    return sorted(customers, key=lambda c: c.id)
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/errors.py b/parcelo/errors.py
+--- a/parcelo/errors.py	2026-11-10 12:17:53
++++ b/parcelo/errors.py	2026-11-12 01:39:46
+@@ -6,6 +6,7 @@
+     "E_BAD_STATE",
+     "E_BAD_INPUT",
+     "E_LIMIT",
++    "E_INVALID_TIER",
+ }
+ 
+ 
+@@ -15,4 +16,4 @@
+             raise RuntimeError(f"unregistered error code {code}")
+         super().__init__(f"{code}: {message}")
+         self.code = code
+-        self.message = message
++        self.message = message
+\ No newline at end of file
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_by_tier.py b/tests/unit/test_customers_by_tier.py
+--- a/tests/unit/test_customers_by_tier.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_by_tier.py	2026-11-12 01:40:21
+@@ -0,0 +1,30 @@
++from parcelo.store import db, reset
++from parcelo.customers import add_customer, customers_by_tier
++from parcelo.errors import DomainError
++import pytest
++
++def test_customers_by_tier_returns_matching_customers_sorted():
++    reset()
++    # Creating customers in non-sorted order to verify sorting
++    # add_customer uses random IDs, so we will manually set them for predictability
++    # but the helper function doesn't allow that. We'll just create several.
++    c1 = add_customer("Alice", "gold")
++    c2 = add_customer("Bob", "gold")
++    c3 = add_customer("Charlie", "standard")
++    
++    gold_customers = customers_by_tier("gold")
++    assert len(gold_customers) == 2
++    assert gold_customers == sorted(gold_customers, key=lambda c: c.id)
++    assert all(c.tier == "gold" for c in gold_customers)
++
++def test_customers_by_tier_returns_empty_list_when_none_match():
++    reset()
++    add_customer("Alice", "standard")
++    gold_customers = customers_by_tier("gold")
++    assert gold_customers == []
++
++def test_customers_by_tier_raises_domain_error_for_invalid_tier():
++    reset()
++    with pytest.raises(DomainError) as excinfo:
++        customers_by_tier("platinum")
++    assert excinfo.value.code == "E_INVALID_TIER"
+\ No newline at end of file

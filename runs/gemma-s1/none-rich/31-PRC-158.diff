@@ -1,0 +1,63 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 01:40:42
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class ReturnRequest:
++    id: str
++    shipment_id: str
++    reason: str
++    requested_at: object
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/returns.py b/parcelo/returns.py
+--- a/parcelo/returns.py	1969-12-31 19:00:00
++++ b/parcelo/returns.py	2026-11-12 01:41:02
+@@ -0,0 +1,28 @@
++from parcelo.models import ReturnRequest
++from parcelo.store import db
++from parcelo.ids import next_id
++from parcelo.clock import now
++
++def request_return(shipment_id, reason):
++    shipment = db.shipments.get(shipment_id)
++    if shipment is None:
++        raise ValueError(f"Shipment {shipment_id} not found")
++    
++    if shipment.status != "delivered":
++        raise ValueError("Only delivered shipments can be sent back")
++    
++    existing_returns = returns_for(shipment_id)
++    if len(existing_returns) >= 3:
++        raise ValueError("A shipment can have at most 3 return requests")
++    
++    return_request = ReturnRequest(
++        id=next_id(),
++        shipment_id=shipment_id,
++        reason=reason,
++        requested_at=now()
++    )
++    db.returns[return_request.id] = return_request
++    return return_request
++
++def returns_for(shipment_id):
++    return [r for r in db.returns.values() if r.shipment_id == shipment_id]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 01:40:48
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.returns = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.returns.clear()

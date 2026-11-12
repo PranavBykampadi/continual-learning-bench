@@ -1,0 +1,64 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 01:57:47
+@@ -1,6 +1,23 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Map each customer id to the total of its open invoices (paid and void excluded).
++
++    Customers with no open invoices are omitted. Totals are summed in cents via
++    Money so float drift doesn't creep in; values are returned as dollar floats.
++    """
++    totals = {}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        amount = Money.parse(invoice.amount)
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + amount
++    return {customer_id: total.cents / 100 for customer_id, total in totals.items()}
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 01:58:01
+@@ -0,0 +1,33 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def test_outstanding_by_customer_counts_only_open_invoices():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Bolt")
++    s1 = shipments.create_shipment(a.id, 2, "local")
++    s2 = shipments.create_shipment(a.id, 3, "local")
++    s3 = shipments.create_shipment(b.id, 2, "local")
++    open_a = invoices.issue_invoice(s1.id)
++    paid_a = invoices.issue_invoice(s2.id)
++    open_b = invoices.issue_invoice(s3.id)
++    invoices.mark_paid(paid_a.id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {a.id: open_a.amount, b.id: open_b.amount}
++
++
++def test_outstanding_by_customer_sums_multiple_open_invoices():
++    a = customers.add_customer("Acme")
++    s1 = shipments.create_shipment(a.id, 2, "local")
++    s2 = shipments.create_shipment(a.id, 2, "local")
++    i1 = invoices.issue_invoice(s1.id)
++    i2 = invoices.issue_invoice(s2.id)
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {a.id: round(i1.amount + i2.amount, 2)}
++
++
++def test_outstanding_by_customer_empty_when_nothing_open():
++    assert reports.outstanding_by_customer() == {}

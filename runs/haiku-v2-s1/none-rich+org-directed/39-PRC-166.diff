@@ -1,0 +1,145 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:25:47
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-166] invoices: escalate large unpaid invoices to collections
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:25:46
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## invoices
++
++- `invoices.escalate_invoice(invoice_id)`: hand an open invoice of at least 500.00 to collections
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:25:40
+@@ -1,8 +1,12 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
++from parcelo.settings import ESCALATION_MIN_AMOUNT
+ from parcelo.store import db
+ 
+ 
+@@ -32,3 +36,30 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def escalate_invoice(invoice_id: str) -> Invoice:
++    """Hand a large unpaid invoice over to the collections team.
++
++    Only open invoices of at least ESCALATION_MIN_AMOUNT can be escalated.
++
++    Args:
++        invoice_id: ID of the invoice to escalate.
++
++    Returns:
++        The escalated invoice.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the invoice does not exist. E_BAD_STATE if
++            it is not open or is below ESCALATION_MIN_AMOUNT.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is {invoice.status}")
++    if Money.parse(invoice.amount) < ESCALATION_MIN_AMOUNT:
++        raise DomainError("E_BAD_STATE", f"invoice {invoice_id} is below the escalation minimum")
++    invoice.status = "escalated"
++    events.emit("invoice.escalated", invoice.id)
++    return invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:25:37
+@@ -0,0 +1,6 @@
++"""Business thresholds and rates. Finance or product may ask us to change these."""
++
++from parcelo.money import Money
++
++# Open invoices at or above this amount can be escalated to collections.
++ESCALATION_MIN_AMOUNT = Money.parse("500.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 02:25:51
+@@ -1,9 +1,58 @@
+-from parcelo import customers, invoices, shipments
++import pytest
+ 
++from parcelo import customers, events, invoices, shipments
++from parcelo.errors import DomainError
+ 
++
+ def test_issue_and_pay():
+     c = customers.add_customer("Acme")
+     s = shipments.create_shipment(c.id, 2, "local")
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_escalate_large_open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 400, "local")  # 504.00
++    inv = invoices.issue_invoice(s.id)
++    out = invoices.escalate_invoice(inv.id)
++    assert out is inv
++    assert out.status == "escalated"
++    assert [e["name"] for e in events.OUTBOX] == ["shipment.created", "invoice.escalated"]
++    assert inv not in invoices.open_invoices()
++
++
++def test_escalate_at_threshold_is_allowed():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 396.4, "local")  # 4.5 + 1.25 * 396.4 = 500.00
++    inv = invoices.issue_invoice(s.id)
++    assert inv.amount == 500.0
++    assert invoices.escalate_invoice(inv.id).status == "escalated"
++
++
++def test_escalate_small_invoice_fails():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")  # 7.00
++    inv = invoices.issue_invoice(s.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert inv.status == "open"
++
++
++def test_escalate_paid_invoice_fails():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 400, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice(inv.id)
++    assert exc.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++
++
++def test_escalate_missing_invoice_fails():
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice("INV-missing")
++    assert exc.value.code == "E_NOT_FOUND"

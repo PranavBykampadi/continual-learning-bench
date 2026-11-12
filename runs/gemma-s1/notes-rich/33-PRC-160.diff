@@ -1,0 +1,106 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:08:23
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-160] shipments: add mark_returned to record shipments returning to depot
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:08:16
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_returned(shipment_id)`: mark a delivered shipment as returned to the depot
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:06:23
+@@ -19,6 +19,7 @@
+     status: str = "created"
+     created_at: object = None
+     delivered_at: object = None
++    returned_at: object = None
+     notes: list = field(default_factory=list)
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:06:43
+@@ -28,3 +28,16 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_returned(shipment_id):
++    shipment = get_shipment(shipment_id)
++    if shipment.status == "returned":
++        return shipment
++    if shipment.status == "created":
++        raise DomainError("E_BAD_STATE", f"Shipment {shipment_id} is still in created state")
++    
++    shipment.status = "returned"
++    shipment.returned_at = clock.now()
++    events.emit("shipment.returned", shipment.id, returned_at=shipment.returned_at)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_returned.py b/tests/unit/test_mark_returned.py
+--- a/tests/unit/test_mark_returned.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_returned.py	2026-11-12 02:08:05
+@@ -0,0 +1,49 @@
++import pytest
++from parcelo import clock
++from parcelo.store import db
++from parcelo.shipments import create_shipment, mark_returned
++from parcelo.errors import DomainError
++
++def test_mark_returned_success():
++    # Setup: create and deliver a shipment
++    customer_id = "cust_123"
++    db.customers[customer_id] = type('Customer', (), {'id': customer_id})()
++    
++    shipment = create_shipment(customer_id, 1.0, "local")
++    shipment.status = "delivered"
++    
++    returned_shipment = mark_returned(shipment.id)
++    
++    assert returned_shipment.status == "returned"
++    assert returned_shipment.returned_at is not None
++
++def test_mark_returned_idempotency():
++    customer_id = "cust_123"
++    db.customers[customer_id] = type('Customer', (), {'id': customer_id})()
++    
++    shipment = create_shipment(customer_id, 1.0, "local")
++    shipment.status = "delivered"
++    
++    mark_returned(shipment.id)
++    first_returned_at = shipment.returned_at
++    
++    # Second call should return shipment unchanged
++    returned_shipment = mark_returned(shipment.id)
++    assert returned_shipment.status == "returned"
++    assert returned_shipment.returned_at == first_returned_at
++
++def test_mark_returned_fails_for_created_status():
++    customer_id = "cust_123"
++    db.customers[customer_id] = type('Customer', (), {'id': customer_id})()
++    
++    shipment = create_shipment(customer_id, 1.0, "local")
++    # status is "created" by default
++    
++    with pytest.raises(DomainError) as excinfo:
++        mark_returned(shipment.id)
++    assert excinfo.value.code == "E_BAD_STATE"
++
++def test_mark_returned_fails_for_non_existent_shipment():
++    with pytest.raises(DomainError) as excinfo:
++        mark_returned("non_existent_id")
++    assert excinfo.value.code == "E_NOT_FOUND"

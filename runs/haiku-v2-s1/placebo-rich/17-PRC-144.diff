@@ -1,0 +1,28 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:01:38
+@@ -1,3 +1,5 @@
++from parcelo.legacy.billing import fuel_surcharge
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +14,18 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++INSURANCE_PCT = 2.0
++INSURANCE_MIN_FEE = 1.00
++
++
++def insurance_fee(declared_value, zone):
++    """Insurance fee: 2% of declared value plus the zone fuel surcharge, min 1.00."""
++    if zone not in ZONE_BASE:
++        raise ValueError("unknown zone: %s" % zone)
++    if declared_value <= 0:
++        raise ValueError("declared value must be positive")
++    base = declared_value * INSURANCE_PCT / 100.0
++    surcharge = fuel_surcharge(declared_value, zone)
++    return round(max(base + surcharge, INSURANCE_MIN_FEE), 2)

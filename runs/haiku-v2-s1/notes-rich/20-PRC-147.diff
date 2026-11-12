@@ -1,0 +1,94 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:08:42
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: add per-customer volume report (PRC-147)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:08:40
+@@ -14,6 +14,27 @@
+     return counts
+ 
+ 
++def _volume_label(shipment_count):
++    # Same thresholds as parcelo/legacy/billing.py volume_tier; reimplemented
++    # here because parcelo.legacy is scheduled for deletion.
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_label(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 02:08:49
+@@ -0,0 +1,48 @@
++from parcelo import customers, reports, shipments
++
++
++def test_volume_report_counts_shipments_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    shipments.create_shipment(a.id, 1, "local")
++    shipments.create_shipment(a.id, 2, "national")
++
++    report = reports.volume_report()
++
++    assert report[a.id] == {"shipments": 2, "tier": "starter"}
++    assert report[b.id] == {"shipments": 0, "tier": "starter"}
++
++
++def test_volume_report_includes_customers_with_no_shipments():
++    c = customers.add_customer("Empty Co")
++
++    report = reports.volume_report()
++
++    assert set(report) == {c.id}
++    assert report[c.id]["shipments"] == 0
++
++
++def test_volume_report_empty_store():
++    assert reports.volume_report() == {}
++
++
++def test_volume_report_tier_thresholds():
++    c = customers.add_customer("Bulky")
++    for _ in range(10):
++        shipments.create_shipment(c.id, 1, "local")
++    assert reports.volume_report()[c.id]["tier"] == "regular"
++
++    for _ in range(40):
++        shipments.create_shipment(c.id, 1, "local")
++    assert reports.volume_report()[c.id] == {"shipments": 50, "tier": "bulk"}
++
++
++def test_volume_report_ignores_shipments_of_unknown_customers():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 1, "local")
++    s.customer_id = "C_missing"  # customer record no longer exists
++
++    report = reports.volume_report()
++
++    assert set(report) == {c.id}
++    assert report[c.id]["shipments"] == 0

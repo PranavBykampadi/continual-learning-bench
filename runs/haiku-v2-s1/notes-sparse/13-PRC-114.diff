@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:04:09
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: invoice aging report (PRC-114)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:04:00
+@@ -1,6 +1,37 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.invoices import open_invoices
++from parcelo.legacy.billing import days_between
+ from parcelo.store import db
++
++
++def _naive_utc_now():
++    # issue_invoice stores naive UTC datetimes; clock.now() is timezone-aware.
++    now = clock.now()
++    if now.tzinfo is not None:
++        now = now.astimezone(timezone.utc).replace(tzinfo=None)
++    return now
++
++
++def aging_report():
++    buckets = {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++    now = _naive_utc_now()
++    for invoice in open_invoices():
++        if invoice.issued_at is None:
++            raise DomainError("E_BAD_STATE", f"invoice {invoice.id} has no issue date")
++        age = days_between(invoice.issued_at, now)
++        if age < 0:
++            raise DomainError("E_BAD_STATE", f"invoice {invoice.id} is issued in the future")
++        if age <= 30:
++            key = "0-30"
++        elif age <= 60:
++            key = "31-60"
++        else:
++            key = "60+"
++        buckets[key] += invoice.amount
++    return {key: round(total, 2) for key, total in buckets.items()}
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 02:04:09
+@@ -0,0 +1,54 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.reports import aging_report
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++def _add(inv_id, amount, days_old, status="open"):
++    issued = (NOW - timedelta(days=days_old)).replace(tzinfo=None)
++    db.invoices[inv_id] = Invoice(
++        id=inv_id, shipment_id="shp", amount=amount, status=status, issued_at=issued
++    )
++
++
++def test_empty_buckets_are_zero():
++    clock.set_fixed(NOW)
++    assert aging_report() == {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++
++
++def test_buckets_by_whole_days():
++    clock.set_fixed(NOW)
++    _add("a", 10.0, 0)
++    _add("b", 20.0, 30)
++    _add("c", 30.0, 31)
++    _add("d", 40.0, 60)
++    _add("e", 50.0, 61)
++    assert aging_report() == {"0-30": 30.0, "31-60": 70.0, "60+": 50.0}
++
++
++def test_paid_invoices_are_excluded():
++    clock.set_fixed(NOW)
++    _add("a", 10.0, 5, status="paid")
++    _add("b", 5.0, 5)
++    assert aging_report() == {"0-30": 5.0, "31-60": 0.0, "60+": 0.0}
++
++
++def test_aware_clock_with_naive_issue_dates():
++    clock.set_fixed(NOW)
++    _add("a", 12.5, 90)
++    assert aging_report()["60+"] == 12.5
++
++
++def test_missing_issue_date_raises():
++    clock.set_fixed(NOW)
++    db.invoices["x"] = Invoice(id="x", shipment_id="shp", amount=1.0)
++    with pytest.raises(DomainError) as exc:
++        aging_report()
++    assert exc.value.code == "E_BAD_STATE"

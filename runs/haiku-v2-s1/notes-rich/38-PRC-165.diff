@@ -1,0 +1,85 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:23:36
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: add shipments_without_invoice
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:23:36
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments no invoice refers to, sorted by id; no error codes
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:23:35
+@@ -14,6 +14,14 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    # Read-only: no events emitted. Returns shipments that no invoice refers to,
++    # sorted by id.
++    billed = {i.shipment_id for i in db.invoices.values()}
++    unbilled = [s for s in db.shipments.values() if s.id not in billed]
++    return sorted(unbilled, key=lambda s: s.id)
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_without_invoice.py b/tests/unit/test_shipments_without_invoice.py
+--- a/tests/unit/test_shipments_without_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_without_invoice.py	2026-11-12 02:23:41
+@@ -0,0 +1,41 @@
++from parcelo import customers, events, invoices, reports, shipments
++
++
++def test_returns_only_unbilled_shipments():
++    c = customers.add_customer("Acme")
++    billed = shipments.create_shipment(c.id, 2, "local")
++    unbilled = shipments.create_shipment(c.id, 3, "national")
++    invoices.issue_invoice(billed.id)
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == [unbilled.id]
++
++
++def test_all_unbilled_when_no_invoices():
++    c = customers.add_customer("Acme")
++    a = shipments.create_shipment(c.id, 1, "local")
++    b = shipments.create_shipment(c.id, 1, "international")
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == sorted([a.id, b.id])
++
++
++def test_empty_when_everything_is_billed():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []
++
++
++def test_sorted_by_id_and_read_only():
++    c =customers.add_customer("Acme")
++    made = [shipments.create_shipment(c.id, 1, "local") for _ in range(3)]
++    events_before = len(events.OUTBOX)
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == sorted(s.id for s in made)
++    assert len(events.OUTBOX) == events_before

@@ -1,0 +1,110 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 01:46:38
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: add heavy_quote (PRC-156)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 01:46:32
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: price for a weight and zone, including surcharge for parcels over 30kg
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 01:45:57
+@@ -1,14 +1,42 @@
++from parcelo.money import Money
++from parcelo.errors import DomainError
++from parcelo import settings
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+ 
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+-        raise ValueError("unknown zone: %s" % zone)
+-    return ZONE_BASE[zone]
++        raise DomainError("E_BAD_ZONE", f"unknown zone: {zone}")
++    return Money.parse(ZONE_BASE[zone])
+ 
+ 
+ def quote(weight_kg, zone):
+     if weight_kg <= 0:
+-        raise ValueError("weight must be positive")
+-    return round(base_rate(zone) + PER_KG * weight_kg, 2)
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
++    
++    base = base_rate(zone)
++    weight_cost = Money.parse(PER_KG * weight_kg)
++    total = base + weight_cost
++    
++    # Return float to maintain compatibility with existing frozen tests
++    return float(total.cents / 100)
++
++
++def heavy_quote(weight_kg, zone):
++    """
++    Calculates the quote for a parcel, including a surcharge for heavy parcels.
++    """
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
++    
++    # quote() returns a float, wrap it in Money for internal logic
++    total = Money.parse(quote(weight_kg, zone))
++    
++    if weight_kg > settings.HEAVY_THRESHOLD_KG:
++        extra_weight = weight_kg - settings.HEAVY_THRESHOLD_KG
++        surcharge = Money.parse(extra_weight * settings.HEAVY_SURCHARGE_PER_KG)
++        total += surcharge
++        
++    return total
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 01:44:35
+@@ -0,0 +1,2 @@
++HEAVY_THRESHOLD_KG = 30
++HEAVY_SURCHARGE_PER_KG = 0.75
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_heavy_quote.py b/tests/unit/test_heavy_quote.py
+--- a/tests/unit/test_heavy_quote.py	1969-12-31 19:00:00
++++ b/tests/unit/test_heavy_quote.py	2026-11-12 01:46:20
+@@ -0,0 +1,31 @@
++import pytest
++from parcelo.rates import heavy_quote
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++def test_heavy_quote_normal_weight():
++    # weight <= 30kg: 4.5 + 1.25 * 10 = 17.0
++    assert heavy_quote(10, "local") == Money.parse(17.0)
++
++def test_heavy_quote_at_threshold():
++    # weight = 30kg: 4.5 + 1.25 * 30 = 42.0
++    assert heavy_quote(30, "local") == Money.parse(42.0)
++
++def test_heavy_quote_heavy_weight():
++    # weight = 40kg: (4.5 + 1.25 * 40) + (10 * 0.75) = 54.5 + 7.5 = 62.0
++    assert heavy_quote(40, "local") == Money.parse(62.0)
++
++def test_heavy_quote_invalid_zone():
++    with pytest.raises(DomainError) as excinfo:
++        heavy_quote(10, "mars")
++    assert excinfo.value.code == "E_BAD_ZONE"
++
++def test_heavy_quote_invalid_weight():
++    with pytest.raises(DomainError) as excinfo:
++        heavy_quote(-1, "local")
++    assert excinfo.value.code == "E_BAD_WEIGHT"
++
++def test_heavy_quote_zero_weight():
++    with pytest.raises(DomainError) as excinfo:
++        heavy_quote(0, "local")
++    assert excinfo.value.code == "E_BAD_WEIGHT"

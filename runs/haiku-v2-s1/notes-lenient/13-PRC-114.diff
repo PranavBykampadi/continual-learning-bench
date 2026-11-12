@@ -1,0 +1,102 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:03:49
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:03:43
+@@ -1,6 +1,31 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import days_between
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def aging_report():
++    """Total unpaid invoice amounts grouped by age in whole days since issue.
++
++    Invoices are bucketed as 0-30, 31-60 and 60+ days old. Paid invoices are
++    excluded. Issue timestamps are naive UTC (see invoices.issue_invoice), so
++    the age is measured against naive UTC too.
++    """
++    now = datetime.utcnow()
++    totals = {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++    for invoice in db.invoices.values():
++        if invoice.status == "paid":
++            continue
++        age = days_between(invoice.issued_at, now)
++        if age <= 30:
++            bucket = "0-30"
++        elif age <= 60:
++            bucket = "31-60"
++        else:
++            bucket = "60+"
++        totals[bucket] = totals[bucket] + Money.parse(invoice.amount)
++    return {bucket: total.cents / 100 for bucket, total in totals.items()}
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-12 02:03:47
+@@ -0,0 +1,52 @@
++from datetime import datetime, timedelta
++
++from parcelo import reports
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _add(amount, days_old, status="open"):
++    inv = Invoice(
++        id=f"INV-{len(db.invoices) + 1:04d}",
++        shipment_id="shp_x",
++        amount=amount,
++        status=status,
++        issued_at=datetime.utcnow() - timedelta(days=days_old),
++    )
++    db.invoices[inv.id] = inv
++    return inv
++
++
++def test_empty_store_totals_zero():
++    assert reports.aging_report() == {"0-30": 0, "31-60": 0, "60+": 0}
++
++
++def test_buckets_open_invoices_by_age():
++    _add(10.50, 0)
++    _add(20.00, 30)
++    _add(5.25, 31)
++    _add(7.00, 60)
++    _add(3.00, 61)
++    _add(100.00, 400)
++
++    assert reports.aging_report() == {
++        "0-30": 30.50,
++        "31-60": 12.25,
++        "60+": 103.00,
++    }
++
++
++def test_paid_invoices_are_excluded():
++    _add(10.00, 5)
++    _add(50.00, 5, status="paid")
++    _add(25.00, 90, status="paid")
++
++    assert reports.aging_report() == {"0-30": 10.00, "31-60": 0, "60+": 0}
++
++
++def test_empty_bucket_is_zero():
++    _add(12.00, 45)
++
++    result = reports.aging_report()
++    assert result == {"0-30": 0, "31-60": 12.00, "60+": 0}
++    assert isinstance(result["0-30"], (int, float))

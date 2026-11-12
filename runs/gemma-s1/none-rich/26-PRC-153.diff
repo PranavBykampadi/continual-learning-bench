@@ -1,0 +1,27 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 01:35:01
+@@ -27,3 +27,22 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id):
++    # Ensure customer exists
++    get_customer(customer_id)
++    
++    open_invoices_count = 0
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            open_invoices_count += 1
++            
++    if open_invoices_count > 3:
++        return True
++        
++    if outstanding_balance(customer_id) > 250.00:
++        return True
++        
++    return False
+\ No newline at end of file

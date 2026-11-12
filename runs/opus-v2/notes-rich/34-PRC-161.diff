@@ -1,0 +1,139 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:30:58
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-161] customers: add `rebate_for` volume rebate on paid invoices
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:30:56
+@@ -6,6 +6,8 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.rebate_for(customer_id)`: volume rebate the customer has earned, in dollars (float). Counts all of the customer's shipments, whatever their status: below `settings.REBATE_REGULAR_MIN_SHIPMENTS` (10) the rebate is 0.0; from 10 it is `settings.REBATE_REGULAR_PCT` (3%), and from `settings.REBATE_BULK_MIN_SHIPMENTS` (50) it is `settings.REBATE_BULK_PCT` (6%), of the total of the customer's paid invoices, rounded half-up to the cent. With no paid invoices the rebate is 0.0. Valid input: the id of an existing customer. Idempotent (read-only, emits no event).
++  - `E_NOT_FOUND`: no customer with that id
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:30:53
+@@ -1,6 +1,9 @@
+ import uuid
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +30,24 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned: a share of the customer's paid invoices by shipment count."""
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    shipment_ids = {
++        s.id for s in db.shipments.values() if s.customer_id == customer_id
++    }
++    count = len(shipment_ids)
++    if count >= settings.REBATE_BULK_MIN_SHIPMENTS:
++        pct = settings.REBATE_BULK_PCT
++    elif count >= settings.REBATE_REGULAR_MIN_SHIPMENTS:
++        pct = settings.REBATE_REGULAR_PCT
++    else:
++        return 0.0
++    paid = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.shipment_id in shipment_ids and invoice.status == "paid":
++            paid = paid + Money.parse(invoice.amount)
++    return paid.scale(pct / 100).cents / 100
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:30:45
+@@ -0,0 +1,7 @@
++"""Named thresholds, rates and limits used across parcelo."""
++
++# Volume rebate. Same shipment-count cut-offs as `legacy.billing.volume_tier`.
++REBATE_REGULAR_MIN_SHIPMENTS = 10
++REBATE_REGULAR_PCT = 3
++REBATE_BULK_MIN_SHIPMENTS = 50
++REBATE_BULK_PCT = 6
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rebates.py b/tests/test_rebates.py
+--- a/tests/test_rebates.py	1969-12-31 19:00:00
++++ b/tests/test_rebates.py	2026-11-12 02:31:04
+@@ -0,0 +1,63 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _customer(n_shipments, paid=(), unpaid=()):
++    c = customers.add_customer("Acme")
++    ships = [shipments.create_shipment(c.id, 1, "local") for _ in range(n_shipments)]
++    for i, amt in enumerate(paid):
++        inv_id = f"{c.id}-P{i}"
++        db.invoices[inv_id] = Invoice(id=inv_id, shipment_id=ships[0].id, amount=amt, status="paid")
++    for i, amt in enumerate(unpaid):
++        inv_id = f"{c.id}-O{i}"
++        db.invoices[inv_id] = Invoice(id=inv_id, shipment_id=ships[0].id, amount=amt)
++    events.OUTBOX.clear()
++    return c
++
++
++def test_below_threshold_is_zero():
++    c = _customer(9, paid=[100.0])
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_regular_tier_three_percent_of_paid_only():
++    c = _customer(10, paid=[100.0, 50.0], unpaid=[1000.0])
++    assert customers.rebate_for(c.id) == 4.5
++
++
++def test_bulk_tier_six_percent():
++    c = _customer(50, paid=[100.0])
++    assert customers.rebate_for(c.id) == 6.0
++
++
++def test_no_paid_invoices_is_zero():
++    c = _customer(10)
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_rounds_half_up_to_cent():
++    c = _customer(10, paid=[0.5])  # 3% of 0.50 = 0.015
++    assert customers.rebate_for(c.id) == 0.02
++
++
++def test_ignores_other_customers_invoices():
++    c = _customer(10)
++    other = _customer(10, paid=[100.0])
++    assert customers.rebate_for(c.id) == 0.0
++    assert customers.rebate_for(other.id) == 3.0
++
++
++def test_read_only_no_event():
++    c = _customer(10, paid=[100.0])
++    assert customers.rebate_for(c.id) == customers.rebate_for(c.id)
++    assert events.OUTBOX == []
++
++
++def test_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for("nope")
++    assert err.value.code == "E_NOT_FOUND"

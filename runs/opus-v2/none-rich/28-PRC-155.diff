@@ -1,0 +1,72 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:12:19
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: list customers by tier (PRC-155)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:12:18
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.customers_by_tier(tier)`: customers on the given tier (empty list if none); raises `DomainError` (`E_BAD_INPUT`) for an unknown tier
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:12:16
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,12 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def customers_by_tier(tier):
++    if tier not in TIERS:
++        raise DomainError("E_BAD_INPUT", f"unknown tier: {tier}")
++    return [c for c in db.customers.values() if c.tier == tier]
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:12:22
+@@ -0,0 +1,23 @@
++import pytest
++
++from parcelo import customers
++from parcelo.errors import DomainError
++
++
++def test_customers_by_tier_filters():
++    a = customers.add_customer("Acme", tier="gold")
++    customers.add_customer("Bolt")
++    c = customers.add_customer("Cargo", tier="gold")
++    result = customers.customers_by_tier("gold")
++    assert {x.id for x in result} == {a.id, c.id}
++
++
++def test_customers_by_tier_empty():
++    customers.add_customer("Bolt")
++    assert customers.customers_by_tier("gold") == []
++
++
++def test_customers_by_tier_unknown_tier():
++    with pytest.raises(DomainError) as err:
++        customers.customers_by_tier("platinum")
++    assert err.value.code == "E_BAD_INPUT"

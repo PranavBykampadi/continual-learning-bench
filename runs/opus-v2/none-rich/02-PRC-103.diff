@@ -1,0 +1,50 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 01:51:43
+@@ -1,3 +1,5 @@
++from parcelo.legacy.billing import fuel_surcharge
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +14,13 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    """Quote including the zone's fuel surcharge.
++
++    Raises ValueError for an unknown zone or a non-positive weight
++    (validation is done by ``quote`` before the surcharge is looked up).
++    """
++    amount = quote(weight_kg, zone)
++    return round(amount + fuel_surcharge(amount, zone), 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 01:51:49
+@@ -10,3 +10,23 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++@pytest.mark.parametrize(
++    "zone,expected",
++    [("local", 7.0), ("national", 11.96), ("international", 29.02)],
++)
++def test_quote_with_surcharge(zone, expected):
++    # local 7.0 +0%; national 11.5 +4% (0.46); international 26.5 +9.5% (2.52)
++    assert rates.quote_with_surcharge(2, zone) == expected
++
++
++def test_quote_with_surcharge_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.quote_with_surcharge(2, "moon")
++
++
++@pytest.mark.parametrize("weight", [0, -1])
++def test_quote_with_surcharge_bad_weight(weight):
++    with pytest.raises(ValueError):
++        rates.quote_with_surcharge(weight, "local")

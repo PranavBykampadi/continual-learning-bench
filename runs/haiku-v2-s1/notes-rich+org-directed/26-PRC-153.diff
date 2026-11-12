@@ -1,0 +1,173 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:23:58
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: add needs_review flag for accounts with many or large open balances (PRC-153)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:23:59
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.needs_review(customer_id)`: True if the customer has more than 3 open invoices or open invoices totaling over 250.00. Raises `E_UNKNOWN_CUSTOMER` for an unknown customer. Read-only.
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:23:49
+@@ -1,6 +1,9 @@
+ import uuid
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +30,31 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id: str) -> bool:
++    """Return True if the customer's open invoices need a manual account review.
++
++    A customer needs review when they have more than
++    ``settings.REVIEW_OPEN_INVOICE_COUNT`` open invoices, or when the total of
++    their open invoices is over ``settings.REVIEW_OPEN_BALANCE``. Read-only.
++
++    Args:
++        customer_id: ID of the customer to check.
++
++    Returns:
++        True if the customer needs a manual review, otherwise False.
++
++    Raises:
++        DomainError: with code E_UNKNOWN_CUSTOMER if the customer does not exist.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    count = 0
++    total = Money.zero()
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            count += 1
++            total = total + Money.parse(invoice.amount)
++    return count > settings.REVIEW_OPEN_INVOICE_COUNT or settings.REVIEW_OPEN_BALANCE < total
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:23:44
+@@ -0,0 +1,13 @@
++"""Business thresholds and limits.
++
++Anything finance or product may ask us to change lives here as an UPPER_CASE
++constant. Functions import these instead of using bare numbers.
++"""
++
++from parcelo.money import Money
++
++# customers.needs_review: flag when open invoices exceed this count.
++REVIEW_OPEN_INVOICE_COUNT = 3
++
++# customers.needs_review: flag when the open invoice total exceeds this amount.
++REVIEW_OPEN_BALANCE = Money.parse("250.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_needs_review.py b/tests/unit/test_needs_review.py
+--- a/tests/unit/test_needs_review.py	1969-12-31 19:00:00
++++ b/tests/unit/test_needs_review.py	2026-11-12 02:23:55
+@@ -0,0 +1,101 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _customer_with_shipment(name="Acme"):
++    c = customers.add_customer(name)
++    s = shipments.create_shipment(c.id, 1.0, "local")
++    return c, s
++
++
++def _add_invoice(shipment, amount, status="open"):
++    invoice = Invoice(
++        id=f"INV-T{len(db.invoices) + 1:04d}",
++        shipment_id=shipment.id,
++        amount=amount,
++        status=status,
++    )
++    db.invoices[invoice.id] = invoice
++    return invoice
++
++
++def test_no_invoices_does_not_need_review():
++    c, _ = _customer_with_shipment()
++    assert customers.needs_review(c.id) is False
++
++
++def test_three_open_invoices_under_limit_does_not_need_review():
++    c, s = _customer_with_shipment()
++    for _ in range(3):
++        _add_invoice(s, 10.00)
++    assert customers.needs_review(c.id) is False
++
++
++def test_four_open_invoices_needs_review():
++    c, s = _customer_with_shipment()
++    for _ in range(4):
++        _add_invoice(s, 10.00)
++    assert customers.needs_review(c.id) is True
++
++
++def test_open_balance_over_limit_needs_review():
++    c, s = _customer_with_shipment()
++    _add_invoice(s, 250.01)
++    assert customers.needs_review(c.id) is True
++
++
++def test_open_balance_exactly_at_limit_does_not_need_review():
++    c, s = _customer_with_shipment()
++    _add_invoice(s, 100.00)
++    _add_invoice(s, 150.00)
++    assert customers.needs_review(c.id) is False
++
++
++def test_float_amounts_are_summed_in_cents():
++    # 0.1 + 0.2 style float drift must not push the total over 250.00.
++    c, s = _customer_with_shipment()
++    for _ in range(3):
++        _add_invoice(s, 83.33)  # 249.99 total
++    assert customers.needs_review(c.id) is False
++
++
++def test_paid_invoices_are_not_counted():
++    c, s = _customer_with_shipment()
++    for _ in range(5):
++        _add_invoice(s, 100.00, status="paid")
++    _add_invoice(s, 10.00)
++    assert customers.needs_review(c.id) is False
++
++
++def test_other_customers_invoices_are_not_counted():
++    c, s = _customer_with_shipment("Acme")
++    other, other_s = _customer_with_shipment("Other")
++    for _ in range(4):
++        _add_invoice(other_s, 100.00)
++    assert customers.needs_review(c.id) is False
++    assert customers.needs_review(other.id) is True
++
++
++def test_unknown_customer_raises():
++    with pytest.raises(DomainError) as err:
++    

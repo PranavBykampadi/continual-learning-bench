@@ -1,0 +1,98 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:23:29
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- customers: lock customer account (PRC-163)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:23:26
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +20,26 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def lock_customer(customer_id):
++    """Lock a customer account, e.g. after a suspicious login.
++
++    Args:
++        customer_id: ID of the customer to lock.
++
++    Returns:
++        The locked Customer.
++
++    Raises:
++        DomainError: E_NOT_FOUND if no customer has this ID.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    customer = db.customers[customer_id]
++    customer.locked = True
++    audit.record("customer.locked", customer_id)
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:23:24
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:23:28
+@@ -0,0 +1,34 @@
++import pytest
++
++from parcelo import audit, customers
++from parcelo.errors import DomainError
++from parcelo.models import Customer
++from parcelo.store import db
++
++
++def test_new_customer_is_not_locked():
++    customer = customers.add_customer("Acme")
++    assert customer.locked is False
++
++
++def test_lock_customer_sets_flag_and_returns_customer():
++    customer = customers.add_customer("Acme")
++    result = customers.lock_customer(customer.id)
++    assert result is customer
++    assert db.customers[customer.id].locked is True
++
++
++def test_lock_customer_records_audit_entry():
++    customer = customers.add_customer("Acme")
++    audit.LOG.clear()
++    customers.lock_customer(customer.id)
++    assert [e["action"] for e in audit.LOG] == ["customer.locked"]
++    assert audit.LOG[0]["entity_id"] == customer.id
++
++
++def test_lock_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        customers.lock_customer("C000000")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert "C000000" not in db.customers
++    assert audit.LOG == []

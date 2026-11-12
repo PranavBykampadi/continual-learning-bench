@@ -1,0 +1,69 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:24:46
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- reports: list shipments without an invoice (PRC-165)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:24:43
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.models import Shipment
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,16 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def shipments_without_invoice() -> list[Shipment]:
++    """List shipments that no invoice refers to.
++
++    Returns:
++        The shipments whose id is not the shipment_id of any invoice, in creation order.
++    """
++    invoiced = {invoice.shipment_id for invoice in db.invoices.values()}
++    return [shipment for shipment in db.shipments.values() if shipment.id not in invoiced]
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:24:45
+@@ -0,0 +1,27 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def test_shipments_without_invoice_lists_only_uninvoiced():
++    c = customers.add_customer("Acme")
++    invoiced = shipments.create_shipment(c.id, 2, "local")
++    bare = shipments.create_shipment(c.id, 3, "national")
++    invoices.issue_invoice(invoiced.id)
++
++    assert [s.id for s in reports.shipments_without_invoice()] == [bare.id]
++
++
++def test_shipments_without_invoice_empty_when_all_invoiced():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []
++
++
++def test_shipments_without_invoice_counts_each_shipment_once():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []

@@ -1,0 +1,171 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:27:15
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-166] invoices: add escalate_invoice
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:27:16
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## invoices
++
++- `invoices.escalate_invoice(invoice_id)`: send an open invoice of at least 500.00 USD to collections; returns the invoice. Idempotent: safe to retry. Error codes: E_BAD_INPUT, E_NOT_FOUND, E_BAD_STATE, E_LIMIT
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:27:12
+@@ -1,7 +1,10 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import events, settings
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +35,25 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def escalate_invoice(invoice_id):
++    """Send an open invoice of at least 500.00 USD to the collections team.
++
++    Idempotent: safe to retry. An invoice that is already escalated is returned unchanged.
++    """
++    if not isinstance(invoice_id, str) or not invoice_id:
++        raise DomainError("E_BAD_INPUT", repr(invoice_id))
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "escalated":
++        return invoice
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", invoice.status)
++    amount = Money.parse(invoice.amount)
++    if amount.cents < settings.ESCALATION_MIN_CENTS:
++        raise DomainError("E_LIMIT", str(amount))
++    invoice.status = "escalated"
++    events.emit("invoice.escalated", invoice.id)
++    return invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:27:09
+@@ -0,0 +1,4 @@
++# Business thresholds and limits. Finance owns these values; keep them here.
++
++# Smallest unpaid invoice that can be escalated to collections.
++ESCALATION_MIN_CENTS = 50000  # 500.00 USD
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices.py b/tests/unit/test_invoices.py
+--- a/tests/unit/test_invoices.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices.py	2026-11-12 02:27:26
+@@ -0,0 +1,100 @@
++import math
++
++import pytest
++
++from parcelo import events, invoices, store
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++
++
++def _add_invoice(invoice_id="INV-1", amount=600.0, status="open"):
++    invoice = Invoice(id=invoice_id, shipment_id="shp_1", amount=amount, status=status)
++    store.db.invoices[invoice.id] = invoice
++    return invoice
++
++
++def _snapshot():
++    return {k: (v.status, v.amount) for k, v in store.db.invoices.items()}
++
++
++def test_escalate_invoice_sets_status_and_emits():
++    _add_invoice(amount=750.0)
++    events.OUTBOX.clear()
++    result = invoices.escalate_invoice("INV-1")
++    assert result.status == "escalated"
++    assert store.db.invoices["INV-1"].status == "escalated"
++    assert events.OUTBOX[-1]["name"] == "invoice.escalated"
++    assert events.OUTBOX[-1]["entity_id"] == "INV-1"
++
++
++def test_escalate_invoice_at_limit_succeeds():
++    _add_invoice(amount=500.0)
++    assert invoices.escalate_invoice("INV-1").status == "escalated"
++
++
++def test_escalate_invoice_just_below_limit_fails():
++    _add_invoice(amount=499.99)
++    events.OUTBOX.clear()
++    before = _snapshot()
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice("INV-1")
++    assert exc.value.code == "E_LIMIT"
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_escalate_invoice_already_escalated_returns_unchanged():
++    _add_invoice(amount=600.0)
++    invoices.escalate_invoice("INV-1")
++    events.OUTBOX.clear()
++    before = _snapshot()
++    result = invoices.escalate_invoice("INV-1")
++    assert result.status == "escalated"
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_escalate_invoice_paid_fails():
++    _add_invoice(amount=600.0, status="paid")
++    events.OUTBOX.clear()
++    before = _snapshot()
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice("INV-1")
++    assert exc.value.code == "E_BAD_STATE"
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_escalate_invoice_unknown_fails():
++    _add_invoice(amount=600.0)
++    events.OUTBOX.clear()
++    before = _snapshot()
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice("INV-404")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_escalate_invoice_wrong_case_is_not_found():
++    _add_invoice(invoice_id="INV-1", amount=600.0)
++    with pytest.raises(DomainError) as exc:
++        invoices.escalate_invoice("inv-1")
++    assert exc.value.code == "E_NOT_FOUND"
++    assert store.db.invoices["INV-1"].status == "open"
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize(
++    "bad_id",
++    ["", None, 1, 1.5, [], ["INV-1"], True, 0, -1, math.nan, math.inf],
++)
++def test_escalate_invoice_bad_input_fails(bad_id):
++    _add_invoice(amount=600.0)
++    events.O

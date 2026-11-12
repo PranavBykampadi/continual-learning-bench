@@ -1,0 +1,120 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:01:38
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:01:24
+@@ -1,6 +1,31 @@
+ from datetime import datetime
+ 
++from parcelo.invoices import open_invoices
++from parcelo.money import Money
++from parcelo.shipments import get_shipment
+ from parcelo.store import db
++
++
++def outstanding_by_customer() -> dict[str, Money]:
++    """Return what each customer still owes, from their open invoices.
++
++    Only invoices with status "open" count. Paid and void invoices are
++    excluded. Every customer in the store appears in the result, with a zero
++    balance if they have no open invoices.
++
++    Returns:
++        A dict mapping customer id to the Money total of that customer's open
++        invoices.
++
++    Raises:
++        DomainError: E_NOT_FOUND if an open invoice refers to a missing shipment.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in open_invoices():
++        customer_id = get_shipment(invoice.shipment_id).customer_id
++        owed = Money.parse(invoice.amount)
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + owed
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_outstanding_balances.py b/tests/unit/test_outstanding_balances.py
+--- a/tests/unit/test_outstanding_balances.py	1969-12-31 19:00:00
++++ b/tests/unit/test_outstanding_balances.py	2026-11-12 02:01:35
+@@ -0,0 +1,70 @@
++import pytest
++
++from parcelo import customers, reports, shipments
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _invoice(shipment_id, amount, status="open"):
++    invoice = Invoice(
++        id="INV-" + str(len(db.invoices) + 1),
++        shipment_id=shipment_id,
++        amount=amount,
++        status=status,
++    )
++    db.invoices[invoice.id] = invoice
++    return invoice
++
++
++def test_sums_only_open_invoices_per_customer():
++    acme = customers.add_customer("Acme")
++    globex = customers.add_customer("Globex")
++    acme_ship = shipments.create_shipment(acme.id, 2, "local")
++    globex_ship = shipments.create_shipment(globex.id, 2, "local")
++
++    _invoice(acme_ship.id, 7.0)
++    _invoice(acme_ship.id, 9.5)
++    _invoice(acme_ship.id, 100.0, status="paid")
++    _invoice(acme_ship.id, 50.0, status="void")
++    _invoice(globex_ship.id, 3.25)
++
++    result = reports.outstanding_by_customer()
++
++    assert result[acme.id] == Money.parse("16.5")
++    assert result[globex.id] == Money.parse("3.25")
++
++
++def test_customer_without_open_invoices_is_zero():
++    paid_up = customers.add_customer("Paid Up")
++    ship = shipments.create_shipment(paid_up.id, 1, "local")
++    _invoice(ship.id, 12.0, status="paid")
++
++    result = reports.outstanding_by_customer()
++
++    assert result[paid_up.id] == Money.zero()
++
++
++def test_values_are_money_and_sum_exactly():
++    acme = customers.add_customer("Acme")
++    ship = shipments.create_shipment(acme.id, 1, "local")
++    _invoice(ship.id, 0.1)
++    _invoice(ship.id, 0.2)
++
++    result = reports.outstanding_by_customer()
++
++    assert isinstance(result[acme.id], Money)
++    assert result[acme.id].cents == 30
++
++
++def test_empty_store_returns_empty_dict():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_open_invoice_with_missing_shipment_raises():
++    _invoice("shp_missing", 5.0)
++
++    with pytest.raises(DomainError) as err:
++        reports.outstanding_by_customer()
++    assert err.value.code == "E_NOT_FOUND"

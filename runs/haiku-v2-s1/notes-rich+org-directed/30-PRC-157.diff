@@ -1,0 +1,158 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:27:38
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- invoices: put an invoice on hold (PRC-157)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:27:38
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.hold_invoice(invoice_id)`: put an open invoice on hold. Mutates the invoice and emits `invoice.held`; a repeat call on a held invoice changes nothing. Errors: `E_NOT_FOUND` for an unknown invoice, `E_BAD_STATE` if the invoice is not open or on hold.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:27:36
+@@ -1,6 +1,8 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock, events
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -27,6 +29,35 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def hold_invoice(invoice_id):
++    """Put an open invoice on hold so collection pauses.
++
++    Repeating the call on an invoice that is already on hold returns it
++    unchanged and emits no event (callers retry on timeouts).
++
++    Args:
++        invoice_id: ID of the invoice to hold.
++
++    Returns:
++        The invoice, with status "on_hold" and held_at set.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the invoice does not exist, or
++            E_BAD_STATE if it is neither open nor on hold.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "on_hold":
++        return invoice
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", f"{invoice_id} is {invoice.status}")
++    invoice.status = "on_hold"
++    invoice.held_at = clock.now()
++    events.emit("invoice.held", invoice.id)
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:27:34
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    held_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_hold_invoice.py b/tests/unit/test_hold_invoice.py
+--- a/tests/unit/test_hold_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_hold_invoice.py	2026-11-12 02:27:45
+@@ -0,0 +1,76 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import clock, customers, events, invoices, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++HOLD_TIME = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++
++
++def _open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++@pytest.fixture
++def fixed_clock():
++    clock.set_fixed(HOLD_TIME)
++    yield HOLD_TIME
++    clock.clear_fixed()
++
++
++def test_hold_open_invoice(fixed_clock):
++    inv = _open_invoice()
++    events.OUTBOX.clear()
++
++    held = invoices.hold_invoice(inv.id)
++
++    assert held is inv
++    assert held.status == "on_hold"
++    assert held.held_at == HOLD_TIME
++    assert [(e["name"], e["entity_id"]) for e in events.OUTBOX] == [("invoice.held", inv.id)]
++    assert inv.id not in [i.id for i in invoices.open_invoices()]
++
++
++def test_hold_is_idempotent(fixed_clock):
++    inv = _open_invoice()
++    invoices.hold_invoice(inv.id)
++    events.OUTBOX.clear()
++    first_hold = inv.held_at
++
++    clock.set_fixed(datetime(2026, 11, 13, tzinfo=timezone.utc))
++    again = invoices.hold_invoice(inv.id)
++
++    assert again is inv
++    assert again.status == "on_hold"
++    assert again.held_at == first_hold
++    assert events.OUTBOX == []
++
++
++def test_hold_unknown_invoice_fails():
++    events.OUTBOX.clear()
++    before = dict(db.invoices)
++
++    with pytest.raises(DomainError) as exc:
++        invoices.hold_invoice("INV-missing")
++
++    assert exc.value.code == "E_NOT_FOUND"
++    assert db.invoices == before
++    assert events.OUTBOX == []
++
++
++def test_hold_paid_invoice_fails():
++    inv = _open_invoice()
++    invoices.mark_paid(inv.id)
++    events.OUTBOX.clear()
++
++    with pytest.raises(DomainError) as exc:
++        invoices.hold_invoice(inv.id)
++
++    assert exc.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++    assert inv.held_at is None
++    assert events.OUTBOX == []

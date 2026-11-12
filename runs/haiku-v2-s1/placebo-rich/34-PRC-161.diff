@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:08:02
+@@ -1,9 +1,12 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import volume_tier
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
++REBATE_RATES = {"starter": 0.0, "regular": 0.03, "bulk": 0.06}
+ 
+ 
+ def add_customer(name, tier="standard"):
+@@ -27,3 +30,24 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned by a customer, as a share of paid invoices.
++
++    Tiers follow ``volume_tier``: 3% from 10 shipments, 6% from 50.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    shipment_ids = set()
++    shipment_count = 0
++    for shipment in db.shipments.values():
++        if shipment.customer_id == customer_id:
++            shipment_ids.add(shipment.id)
++            shipment_count += 1
++    paid_total = 0.0
++    for invoice in db.invoices.values():
++        if invoice.status == "paid" and invoice.shipment_id in shipment_ids:
++            paid_total += invoice.amount
++    rate = REBATE_RATES[volume_tier(shipment_count)]
++    return round(paid_total * rate, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers.py b/tests/test_customers.py
+--- a/tests/test_customers.py	1969-12-31 19:00:00
++++ b/tests/test_customers.py	2026-11-12 02:08:14
+@@ -0,0 +1,42 @@
++import pytest
++
++from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _ship_and_pay(customer_id, count):
++    for _ in range(count):
++        s = shipments.create_shipment(customer_id, 1, "local")
++        invoices.mark_paid(invoices.issue_invoice(s.id).id)
++
++
++def test_rebate_zero_below_ten_shipments():
++    c = customers.add_customer("Small")
++    _ship_and_pay(c.id, 9)
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_rebate_three_percent_from_ten_shipments():
++    c = customers.add_customer("Mid")
++    _ship_and_pay(c.id, 10)
++    assert customers.rebate_for(c.id) == 1.72  # 57.50 paid * 3%, rounded
++
++
++def test_rebate_six_percent_from_fifty_shipments():
++    c = customers.add_customer("Big")
++    _ship_and_pay(c.id, 50)
++    assert customers.rebate_for(c.id) == 17.25  # 287.50 paid * 6%
++
++
++def test_rebate_ignores_unpaid_invoices():
++    c = customers.add_customer("Open")
++    for _ in range(10):
++        shipments.create_shipment(c.id, 1, "local")
++    s = shipments.create_shipment(c.id, 1, "local")
++    invoices.issue_invoice(s.id)  # open, not paid
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_rebate_unknown_customer_fails():
++    with pytest.raises(DomainError):
++        customers.rebate_for("C-missing")

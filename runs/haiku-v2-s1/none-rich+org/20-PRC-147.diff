@@ -1,0 +1,29 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:07:10
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,18 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def volume_report():
++    """Shipment count and volume tier per customer, including customers with no shipments."""
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def daily_summary():

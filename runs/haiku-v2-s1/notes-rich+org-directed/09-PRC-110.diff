@@ -1,0 +1,67 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:03:28
+@@ -3,7 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
+-- Added gold tier
++- Added gold tier (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:03:25
+@@ -1,5 +1,9 @@
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++# Multiplier applied to the regular quote for each customer tier.
++TIER_FACTOR = {"standard": 1.0, "gold": 0.9}
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +16,10 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    if tier not in TIER_FACTOR:
++        raise ValueError("unknown tier: %s" % tier)
++    regular = Money.parse(quote(weight_kg, zone))
++    return regular.scale(TIER_FACTOR[tier]).cents / 100
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_gold_discount.py b/tests/unit/test_gold_discount.py
+--- a/tests/unit/test_gold_discount.py	1969-12-31 19:00:00
++++ b/tests/unit/test_gold_discount.py	2026-11-12 02:03:26
+@@ -0,0 +1,27 @@
++import pytest
++
++from parcelo import rates
++
++
++def test_gold_gets_ten_percent_off():
++    # local, 2 kg: 4.5 + 1.25 * 2 = 7.00 regular
++    assert rates.discounted_quote(2, "local", "gold") == 6.3
++
++
++def test_standard_has_no_discount():
++    assert rates.discounted_quote(2, "local", "standard") == rates.quote(2, "local")
++
++
++def test_gold_discount_rounds_half_up_once():
++    # local, 1 kg: regular 5.75; 5.75 * 0.9 = 5.175 -> 5.18 (half up)
++    assert rates.discounted_quote(1, "local", "gold") == 5.18
++
++
++def test_unknown_tier_fails():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "local", "platinum")
++
++
++def test_unknown_zone_fails():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "moon", "gold")

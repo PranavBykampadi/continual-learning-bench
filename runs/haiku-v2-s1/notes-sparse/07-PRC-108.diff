@@ -1,0 +1,94 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 01:59:51
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 01:59:45
+@@ -1,10 +1,21 @@
+ from datetime import datetime
+ 
++from parcelo.shipments import get_shipment
+ from parcelo.store import db
+ 
+ 
+ def revenue_total():
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
++
++
++def outstanding_by_customer():
++    balances = {customer_id: 0.0 for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = get_shipment(invoice.shipment_id).customer_id
++        balances[customer_id] = balances.get(customer_id, 0.0) + invoice.amount
++    return {customer_id: round(total, 2) for customer_id, total in balances.items()}
+ 
+ 
+ def shipments_by_zone():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 01:59:50
+@@ -0,0 +1,54 @@
++import pytest
++
++from parcelo import customers, reports, shipments
++from parcelo.models import Invoice
++from parcelo.store import db, reset
++
++
++@pytest.fixture(autouse=True)
++def clean_store():
++    reset()
++    yield
++    reset()
++
++
++def _invoice(shipment_id, amount, status):
++    invoice = Invoice(
++        id="INV-" + str(len(db.invoices) + 1),
++        shipment_id=shipment_id,
++        amount=amount,
++        status=status,
++    )
++    db.invoices[invoice.id] = invoice
++    return invoice
++
++
++def test_outstanding_sums_only_open_invoices_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Bolt")
++    s_a = shipments.create_shipment(a.id, 1, "local")
++    s_b = shipments.create_shipment(b.id, 1, "local")
++    _invoice(s_a.id, 10.5, "open")
++    _invoice(s_a.id, 4.25, "open")
++    _invoice(s_a.id, 99.0, "paid")
++    _invoice(s_b.id, 7.0, "void")
++
++    result = reports.outstanding_by_customer()
++
++    assert result[a.id] == 14.75
++    assert result[b.id] == 0.0
++
++
++def test_customer_without_open_invoices_is_included_with_zero():
++    c = customers.add_customer("Cara")
++
++    assert reports.outstanding_by_customer() == {c.id: 0.0}
++
++
++def test_paid_and_void_invoices_do_not_count():
++    c = customers.add_customer("Dan")
++    s = shipments.create_shipment(c.id, 1, "local")
++    _invoice(s.id, 50.0, "paid")
++    _invoice(s.id, 20.0, "void")
++
++    assert reports.outstanding_by_customer()[c.id] == 0.0

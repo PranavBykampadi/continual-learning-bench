@@ -1,0 +1,61 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:08:42
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,16 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def set_credit_limit(customer_id, amount):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if amount < 0:
++        raise DomainError("E_BAD_INPUT", f"credit limit must not be negative: {amount}")
++    customer = db.customers[customer_id]
++    customer.credit_limit = amount
++    return customer.credit_limit
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:08:45
+@@ -0,0 +1,30 @@
++import pytest
++
++from parcelo import customers
++from parcelo.errors import DomainError
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 1000) == 1000
++    assert customers.get_customer(c.id).credit_limit == 1000
++
++
++def test_set_credit_limit_zero_is_allowed():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 0) == 0
++
++
++def test_set_credit_limit_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit("nope", 100)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_set_credit_limit_negative_rejected_and_unchanged():
++    c = customers.add_customer("Acme")
++    before = c.credit_limit
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, -1)
++    assert err.value.code == "E_BAD_INPUT"
++    assert customers.get_customer(c.id).credit_limit == before

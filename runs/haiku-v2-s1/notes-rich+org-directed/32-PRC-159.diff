@@ -1,0 +1,108 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:29:59
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-159] shipments: list shipments by zone
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:30:00
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.shipments_in_zone(zone)`: list shipments in a zone, sorted by id (read-only; `E_BAD_ZONE` for an unknown zone)
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 02:29:58
+@@ -28,3 +28,25 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def shipments_in_zone(zone: str) -> list[Shipment]:
++    """Return every shipment whose zone is ``zone``, sorted by id.
++
++    Read-only: nothing is mutated and no events are emitted.
++
++    Args:
++        zone: One of the keys of ``ZONE_BASE`` (e.g. "local").
++
++    Returns:
++        Matching shipments sorted by id. Empty if there are none.
++
++    Raises:
++        DomainError: E_BAD_ZONE if ``zone`` is not a known zone.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    return sorted(
++        (s for s in db.shipments.values() if s.zone == zone),
++        key=lambda s: s.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_in_zone.py b/tests/unit/test_shipments_in_zone.py
+--- a/tests/unit/test_shipments_in_zone.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_in_zone.py	2026-11-12 02:30:04
+@@ -0,0 +1,53 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _book(customer_id, zone):
++    return shipments.create_shipment(customer_id, 1.0, zone)
++
++
++def test_returns_only_matching_zone_sorted_by_id():
++    c = customers.add_customer("Acme")
++    a = _book(c.id, "local")
++    _book(c.id, "national")
++    b = _book(c.id, "local")
++    result = shipments.shipments_in_zone("local")
++    assert [s.id for s in result] == sorted([a.id, b.id])
++    assert all(s.zone == "local" for s in result)
++
++
++def test_empty_when_no_shipments_in_zone():
++    c = customers.add_customer("Acme")
++    _book(c.id, "local")
++    assert shipments.shipments_in_zone("international") == []
++
++
++def test_empty_when_no_shipments_at_all():
++    assert shipments.shipments_in_zone("national") == []
++
++
++def test_unknown_zone_raises_bad_zone():
++    c = customers.add_customer("Acme")
++    _book(c.id, "local")
++    before = dict(db.shipments)
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.shipments_in_zone("moon")
++    assert err.value.code == "E_BAD_ZONE"
++    assert db.shipments == before
++    assert events.OUTBOX == []
++
++
++def test_read_only_does_not_mutate_or_emit():
++    c = customers.add_customer("Acme")
++    s = _book(c.id, "local")
++    before = dict(db.shipments)
++    events.OUTBOX.clear()
++    result = shipments.shipments_in_zone("local")
++    assert result == [s]
++    assert db.shipments == before
++    assert s.status == "created"
++    assert events.OUTBOX == []

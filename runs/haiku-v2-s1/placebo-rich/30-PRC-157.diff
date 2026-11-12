@@ -1,0 +1,37 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:06:20
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -27,6 +28,17 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def hold_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise ValueError("only open invoices can be put on hold")
++    invoice.status = "on_hold"
++    invoice.held_at = clock.now()
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:06:19
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    held_at: object = None

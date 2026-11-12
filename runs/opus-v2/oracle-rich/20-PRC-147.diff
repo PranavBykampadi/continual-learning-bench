@@ -1,0 +1,118 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:08:09
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:08:11
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: shipment count and volume tier for every customer, keyed by customer id
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:08:08
+@@ -1,5 +1,9 @@
+ from datetime import datetime
+ 
++from parcelo.settings import (
++    VOLUME_TIER_BULK_MIN_SHIPMENTS,
++    VOLUME_TIER_REGULAR_MIN_SHIPMENTS,
++)
+ from parcelo.store import db
+ 
+ 
+@@ -22,3 +26,30 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def _volume_tier(shipment_count):
++    if shipment_count >= VOLUME_TIER_BULK_MIN_SHIPMENTS:
++        return "bulk"
++    if shipment_count >= VOLUME_TIER_REGULAR_MIN_SHIPMENTS:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Shipment count and volume tier per customer, keyed by customer id.
++
++    Every customer is included, even those with no shipments. Keys are
++    ordered by customer id ascending.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {
++            "shipments": counts[customer_id],
++            "tier": _volume_tier(counts[customer_id]),
++        }
++        for customer_id in sorted(counts)
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:08:03
+@@ -0,0 +1,6 @@
++"""Business thresholds, limits and rates used by parcelo."""
++
++# Minimum shipment counts for each volume tier (same thresholds as the
++# original billing volume_tier helper).
++VOLUME_TIER_BULK_MIN_SHIPMENTS = 50
++VOLUME_TIER_REGULAR_MIN_SHIPMENTS = 10
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 02:08:15
+@@ -0,0 +1,38 @@
++from parcelo import customers, reports, shipments
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_empty_store():
++    assert reports.volume_report() == {}
++
++
++def test_includes_customers_without_shipments():
++    c = customers.add_customer("Idle")
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_and_tier_thresholds():
++    starter = customers.add_customer("Small")
++    regular_low = customers.add_customer("Ten")
++    regular_high = customers.add_customer("FortyNine")
++    bulk = customers.add_customer("Fifty")
++    _ship(starter.id, 9)
++    _ship(regular_low.id, 10)
++    _ship(regular_high.id, 49)
++    _ship(bulk.id, 50)
++
++    report = reports.volume_report()
++
++    assert report[starter.id] == {"shipments": 9, "tier": "starter"}
++    assert report[regular_low.id] == {"shipments": 10, "tier": "regular"}
++    assert report[regular_high.id] == {"shipments": 49, "tier": "regular"}
++    assert report[bulk.id] == {"shipments": 50, "tier": "bulk"}
++
++
++def test_keys_sorted_by_customer_id():
++    ids = [customers.add_customer("C%d" % i).id for i in range(5)]
++    assert list(reports.volume_report()) == sorted(ids)

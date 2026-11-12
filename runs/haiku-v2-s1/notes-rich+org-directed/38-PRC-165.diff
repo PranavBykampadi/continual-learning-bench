@@ -1,0 +1,98 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 02:38:46
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: list shipments that have no invoice
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:38:47
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments that no invoice refers to. Read-only. No error codes. Returns shipments sorted by `id` ascending.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:38:45
+@@ -14,6 +14,21 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    """Return the shipments that no invoice refers to.
++
++    Read-only. Raises no errors.
++
++    Returns:
++        list: Shipment objects with no invoice, sorted by ``id`` ascending.
++    """
++    invoiced = {i.shipment_id for i in db.invoices.values()}
++    return sorted(
++        (s for s in db.shipments.values() if s.id not in invoiced),
++        key=lambda s: s.id,
++    )
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_without_invoice.py b/tests/unit/test_shipments_without_invoice.py
+--- a/tests/unit/test_shipments_without_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_without_invoice.py	2026-11-12 02:38:50
+@@ -0,0 +1,47 @@
++from parcelo import customers, events, invoices, reports, shipments, store
++
++
++def _book(customer_id):
++    return shipments.create_shipment(customer_id, 2, "local")
++
++
++def test_empty_when_no_shipments():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_excludes_shipments_with_invoice():
++    c = customers.add_customer("Acme")
++    invoiced = _book(c.id)
++    uninvoiced = _book(c.id)
++    invoices.issue_invoice(invoiced.id)
++    assert reports.shipments_without_invoice() == [uninvoiced]
++
++
++def test_sorted_by_id_ascending():
++    c = customers.add_customer("Acme")
++    created = [_book(c.id) for _ in range(3)]
++    # Reverse storage order so the test fails if the result follows insertion order.
++    items = list(store.db.shipments.items())
++    store.db.shipments.clear()
++    for key, value in reversed(items):
++        store.db.shipments[key] = value
++    result = reports.shipments_without_invoice()
++    assert [s.id for s in result] == sorted(s.id for s in created)
++
++
++def test_read_only_and_repeatable():
++    c = customers.add_customer("Acme")
++    invoiced = _book(c.id)
++    uninvoiced = _book(c.id)
++    invoices.issue_invoice(invoiced.id)
++    outbox_before = list(events.OUTBOX)
++    shipments_before = dict(store.db.shipments)
++    invoices_before = dict(store.db.invoices)
++
++    first = reports.shipments_without_invoice()
++    second = reports.shipments_without_invoice()
++
++    assert first == second == [uninvoiced]
++    assert events.OUTBOX == outbox_before
++    assert store.db.shipments == shipments_before
++    assert store.db.invoices == invoices_before

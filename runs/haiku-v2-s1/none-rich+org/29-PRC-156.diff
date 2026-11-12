@@ -1,0 +1,43 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:11:49
+@@ -12,3 +12,16 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG_SURCHARGE = 0.75
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus a surcharge for every kg above HEAVY_THRESHOLD_KG."""
++    total = quote(weight_kg, zone)  # validates weight and zone
++    if weight_kg <= HEAVY_THRESHOLD_KG:
++        return total
++    surcharge = HEAVY_PER_KG_SURCHARGE * (weight_kg - HEAVY_THRESHOLD_KG)
++    return round(total + surcharge, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 02:11:53
+@@ -10,3 +10,19 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_heavy_quote_at_threshold_is_normal_quote():
++    assert rates.heavy_quote(30, "local") == rates.quote(30, "local")
++
++
++def test_heavy_quote_adds_surcharge_above_30kg():
++    # 32 kg local: 4.5 + 1.25 * 32 = 44.5, plus 0.75 * 2 = 1.5
++    assert rates.heavy_quote(32, "local") == 46.0
++
++
++def test_heavy_quote_rejects_bad_input():
++    with pytest.raises(ValueError):
++        rates.heavy_quote(0, "local")
++    with pytest.raises(ValueError):
++        rates.heavy_quote(40, "moon")

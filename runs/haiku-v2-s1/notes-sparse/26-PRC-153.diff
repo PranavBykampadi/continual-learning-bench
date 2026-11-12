@@ -1,0 +1,106 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:18:03
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.needs_review(customer_id)`: True when the customer has more than 3 open invoices or open invoices totalling over 250.00; raises `KeyError` for an unknown customer
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:17:57
+@@ -1,9 +1,13 @@
+ import uuid
+ 
++from parcelo.invoices import open_invoices
+ from parcelo.models import Customer
++from parcelo.shipments import get_shipment
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
++REVIEW_MAX_OPEN_INVOICES = 3
++REVIEW_MAX_BALANCE = 250.00
+ 
+ 
+ def add_customer(name, tier="standard"):
+@@ -27,3 +31,14 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id):
++    """True when the customer has more than 3 open invoices or open invoices totalling over 250.00."""
++    get_customer(customer_id)
++    open_count = 0
++    for invoice in open_invoices():
++        if get_shipment(invoice.shipment_id).customer_id == customer_id:
++            open_count += 1
++    # outstanding_balance is already rounded to cents, so a plain comparison is exact enough.
++    return open_count > REVIEW_MAX_OPEN_INVOICES or outstanding_balance(customer_id) > REVIEW_MAX_BALANCE
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:17:57
+@@ -0,0 +1,59 @@
++import pytest
++
++from parcelo import customers, invoices, shipments
++
++
++def _open_invoice(customer_id, weight_kg, zone="local"):
++    s = shipments.create_shipment(customer_id, weight_kg, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_needs_review_false_without_invoices():
++    c = customers.add_customer("Acme")
++    assert customers.needs_review(c.id) is False
++
++
++def test_needs_review_false_at_three_open_invoices():
++    c = customers.add_customer("Acme")
++    for _ in range(3):
++        _open_invoice(c.id, 1)
++    assert customers.needs_review(c.id) is False
++
++
++def test_needs_review_true_over_three_open_invoices():
++    c = customers.add_customer("Acme")
++    for _ in range(4):
++        _open_invoice(c.id, 1)
++    assert customers.needs_review(c.id) is True
++
++
++def test_needs_review_true_when_balance_over_250():
++    c = customers.add_customer("Acme")
++    _open_invoice(c.id, 200, zone="international")  # 24 + 250 = 274.00
++    assert customers.needs_review(c.id) is True
++
++
++def test_needs_review_false_at_exactly_250():
++    c = customers.add_customer("Acme")
++    _open_invoice(c.id, 196.4)  # 4.5 + 1.25 * 196.4 = 250.00
++    assert customers.needs_review(c.id) is False
++
++
++def test_paid_invoices_do_not_count():
++    c = customers.add_customer("Acme")
++    for _ in range(4):
++        invoices.mark_paid(_open_invoice(c.id, 1).id)
++    assert customers.needs_review(c.id) is False
++
++
++def test_other_customers_invoices_do_not_count():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    for _ in range(4):
++        _open_invoice(b.id, 1)
++    assert customers.needs_review(a.id) is False
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(KeyError):
++        customers.needs_review("nope")

@@ -1,0 +1,151 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:09:00
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report, open invoices in 0-30 / 31-60 / 60+ day buckets (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:08:53
+@@ -1,5 +1,8 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +15,38 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def _as_utc(moment):
++    # Invoice.issued_at is naive UTC (invoices.issue_invoice uses utcnow);
++    # clock.now() is timezone-aware. Treat naive values as UTC before subtracting.
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
++def aging_report():
++    """Total open invoice amounts by age in whole days since issue.
++
++    Buckets: "0-30" (0 to 30 days), "31-60" (31 to 60 days), "60+" (more than 60).
++    Paid invoices are skipped. An invoice issued in the future counts as age 0.
++    """
++    now = clock.now()
++    buckets = {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        if invoice.issued_at is None:
++            raise DomainError("E_BAD_STATE", f"invoice {invoice.id} has no issued_at")
++        age = max((now - _as_utc(invoice.issued_at)).days, 0)
++        if age <= 30:
++            key = "0-30"
++        elif age <= 60:
++            key = "31-60"
++        else:
++            key = "60+"
++        buckets[key] = buckets[key] + Money.parse(invoice.amount)
++    return buckets
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging_report.py b/tests/unit/test_aging_report.py
+--- a/tests/unit/test_aging_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging_report.py	2026-11-12 02:08:59
+@@ -0,0 +1,84 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import clock
++from parcelo.money import Money
++from parcelo.models import Invoice
++from parcelo.reports import aging_report
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++def _add(inv_id, amount, days_old, status="open", naive=False):
++    issued = NOW - timedelta(days=days_old)
++    if naive:
++        issued = issued.replace(tzinfo=None)
++    db.invoices[inv_id] = Invoice(
++        id=inv_id, shipment_id="shp_x", amount=amount, status=status, issued_at=issued
++    )
++
++
++def test_empty_report_is_all_zero():
++    clock.set_fixed(NOW)
++    assert aging_report() == {
++        "0-30": Money.zero(),
++        "31-60": Money.zero(),
++        "60+": Money.zero(),
++    }
++
++
++def test_bucket_boundaries():
++    clock.set_fixed(NOW)
++    _add("a", 1.00, 0)
++    _add("b", 2.00, 30)   # last day of 0-30
++    _add("c", 4.00, 31)   # first day of 31-60
++    _add("d", 8.00, 60)   # last day of 31-60
++    _add("e", 16.00, 61)  # first day of 60+
++    report = aging_report()
++    assert report["0-30"] == Money.parse(3.00)
++    assert report["31-60"] == Money.parse(12.00)
++    assert report["60+"] == Money.parse(16.00)
++
++
++def test_paid_invoices_excluded():
++    clock.set_fixed(NOW)
++    _add("open1", 10.00, 5)
++    _add("paid1", 99.00, 5, status="paid")
++    _add("paid2", 99.00, 90, status="paid")
++    report = aging_report()
++    assert report["0-30"] == Money.parse(10.00)
++    assert report["31-60"] == Money.zero()
++    assert report["60+"] == Money.zero()
++
++
++def test_age_is_whole_days_not_partial():
++    clock.set_fixed(NOW)
++    # 30 days and 23 hours old is still 30 whole days -> 0-30
++    db.invoices["x"] = Invoice(
++        id="x", shipment_id="s", amount=5.00,
++        issued_at=NOW - timedelta(days=30, hours=23),
++    )
++    assert aging_report()["0-30"] == Money.parse(5.00)
++
++
++def test_naive_issued_at_is_treated_as_utc():
++    clock.set_fixed(NOW)
++    _add("n1", 7.00, 45, naive=True)
++    assert aging_report()["31-60"] == Money.parse(7.00)
++
++
++def test_money_is_summed_in_money_type():
++    clock.set_fixed(NOW)
++    _add("m1", 0.10, 1)
++    _add("m2", 0.20, 1)
++    total = aging_report()["0-30"]
++    assert isinstance(total, Money)
++    assert total == Money.parse(0.30)
++
++
++def test_report_does_not_mutate_invoices():
++    clock.set_fixed(NOW)
++    _add("keep", 12.34, 70)
++    before = (db.invoices["keep"].status, db.invoices["keep"].amount)
++    aging_report()
++    assert (db.invoices["keep"].status, db.invoices["keep"].amount) == before

@@ -1,0 +1,18 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:07:53
+@@ -12,3 +12,14 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG = 0.75
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus a surcharge for every kg above HEAVY_THRESHOLD_KG."""
++    base = quote(weight_kg, zone)
++    excess = max(0, weight_kg - HEAVY_THRESHOLD_KG)
++    return round(base + HEAVY_PER_KG * excess, 2)

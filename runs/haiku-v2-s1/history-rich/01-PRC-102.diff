@@ -1,0 +1,93 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 01:50:48
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -27,6 +28,19 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def void_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "paid":
++        raise ValueError("cannot void a paid invoice")
++    if invoice.status == "void":
++        raise ValueError("already void")
++    invoice.status = "void"
++    invoice.voided_at = clock.now()
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 01:50:43
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    voided_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_void_invoice.py b/tests/unit/test_void_invoice.py
+--- a/tests/unit/test_void_invoice.py	1969-12-31 19:00:00
++++ b/tests/unit/test_void_invoice.py	2026-11-12 01:50:52
+@@ -0,0 +1,50 @@
++import pytest
++
++from parcelo import clock, customers, invoices, shipments
++from parcelo.store import db
++
++
++def _new_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++def test_void_sets_status_and_timestamp():
++    inv = _new_invoice()
++    result = invoices.void_invoice(inv.id)
++    assert result is inv
++    assert result.status == "void"
++    assert result.voided_at is not None
++    assert db.invoices[inv.id].status == "void"
++
++
++def test_void_uses_clock():
++    moment = clock.now()
++    clock.set_fixed(moment)
++    try:
++        inv = _new_invoice()
++        assert invoices.void_invoice(inv.id).voided_at == moment
++    finally:
++        clock.clear_fixed()
++
++
++def test_void_unknown_invoice_fails():
++    with pytest.raises(KeyError):
++        invoices.void_invoice("INV-missing")
++
++
++def test_void_paid_invoice_fails():
++    inv = _new_invoice()
++    invoices.mark_paid(inv.id)
++    with pytest.raises(ValueError):
++        invoices.void_invoice(inv.id)
++    assert db.invoices[inv.id].status == "paid"
++    assert db.invoices[inv.id].voided_at is None
++
++
++def test_void_twice_fails():
++    inv = _new_invoice()
++    invoices.void_invoice(inv.id)
++    with pytest.raises(ValueError):
++        invoices.void_invoice(inv.id)

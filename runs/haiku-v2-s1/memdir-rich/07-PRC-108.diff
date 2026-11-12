@@ -1,0 +1,103 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:00:51
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:00:44
+@@ -1,6 +1,23 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Map customer id -> total of that customer's open invoices (as Money).
++
++    Only invoices with status "open" count; paid and void invoices are skipped.
++    A customer appears only if they have at least one open invoice.
++    """
++    totals = {}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        amount = Money.parse(invoice.amount)
++        totals[customer_id] = totals.get(customer_id, Money.zero()) + amount
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_outstanding_by_customer.py b/tests/unit/test_outstanding_by_customer.py
+--- a/tests/unit/test_outstanding_by_customer.py	1969-12-31 19:00:00
++++ b/tests/unit/test_outstanding_by_customer.py	2026-11-12 02:00:50
+@@ -0,0 +1,61 @@
++import pytest
++
++from parcelo import customers, invoices, reports, shipments
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _invoice_for(customer_id, weight, zone="local"):
++    s = shipments.create_shipment(customer_id, weight, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_empty_when_no_invoices():
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_sums_open_invoices_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    i1 = _invoice_for(a.id, 1)  # 4.5 + 1.25 = 5.75
++    i2 = _invoice_for(a.id, 2)  # 4.5 + 2.5 = 7.00
++    i3 = _invoice_for(b.id, 4)  # 4.5 + 5.0 = 9.50
++    result = reports.outstanding_by_customer()
++    assert result == {
++        a.id: Money.parse(i1.amount) + Money.parse(i2.amount),
++        b.id: Money.parse(i3.amount),
++    }
++    assert result[a.id] == Money(1275)
++    assert result[b.id] == Money(950)
++
++
++def test_paid_invoices_excluded():
++    a = customers.add_customer("Acme")
++    _invoice_for(a.id, 1)  # 5.75 open
++    paid = _invoice_for(a.id, 2)
++    invoices.mark_paid(paid.id)
++    assert reports.outstanding_by_customer() == {a.id: Money(575)}
++
++
++def test_void_invoices_excluded():
++    a = customers.add_customer("Acme")
++    _invoice_for(a.id, 1)  # 5.75 open
++    voided = _invoice_for(a.id, 2)
++    voided.status = "void"
++    assert reports.outstanding_by_customer() == {a.id: Money(575)}
++
++
++def test_customer_with_only_paid_invoices_absent():
++    a = customers.add_customer("Acme")
++    inv = _invoice_for(a.id, 1)
++    invoices.mark_paid(inv.id)
++    assert reports.outstanding_by_customer() == {}
++
++
++def test_does_not_mutate_invoices():
++    a = customers.add_customer("Acme")
++    inv = _invoice_for(a.id, 1)
++    before = (inv.status, inv.amount)
++    reports.outstanding_by_customer()
++    assert (inv.status, inv.amount) == before
++    assert db.invoices[inv.id].status == "open"

@@ -1,0 +1,22 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 01:35:19
+@@ -20,10 +20,16 @@
+     return db.customers[customer_id]
+ 
+ 
++def reactivate_customer(customer_id):
++    customer = get_customer(customer_id)
++    customer.active = True
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+         shipment = db.shipments[invoice.shipment_id]
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+-    return round(total, 2)
++    return round(total, 2)
+\ No newline at end of file

@@ -1,0 +1,116 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:18:49
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- rates: add heavy_quote for parcels above 30 kg (PRC-156)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:18:50
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: quote plus 0.75 per kg above 30 kg; raises `E_BAD_INPUT` (unknown zone or wrong type) or `E_BAD_WEIGHT` (not positive or not finite)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:18:34
+@@ -1,5 +1,13 @@
++import math
++from decimal import Decimal
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++HEAVY_THRESHOLD_KG = 30
++HEAVY_SURCHARGE_PER_KG = 0.75
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +20,27 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def heavy_quote(weight_kg, zone):
++    """Quote for heavy parcels: the normal quote plus 0.75 per kg above 30 kg.
++
++    Parcels of 30 kg or less get the normal quote. The surcharge is
++    pro-rated for partial kilograms.
++    """
++    # Validate everything before doing any work.
++    if isinstance(weight_kg, bool) or not isinstance(weight_kg, (int, float, Decimal)):
++        raise DomainError("E_BAD_INPUT", "weight_kg must be a number")
++    if not isinstance(zone, str) or not zone:
++        raise DomainError("E_BAD_INPUT", "zone must be a non-empty string")
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_INPUT", "unknown zone: %s" % zone)
++    weight = float(weight_kg)
++    if not math.isfinite(weight) or weight <= 0:
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive and finite")
++
++    total = Money.parse(quote(weight, zone))
++    excess = weight - HEAVY_THRESHOLD_KG
++    if excess > 0:
++        total = total + Money.parse(HEAVY_SURCHARGE_PER_KG).scale(excess)
++    return total.cents / 100
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 02:18:47
+@@ -1,6 +1,7 @@
+ import pytest
+ 
+ from parcelo import rates
++from parcelo.errors import DomainError
+ 
+ 
+ def test_quote_local():
+@@ -10,3 +11,40 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_heavy_quote_at_or_below_threshold_is_normal_quote():
++    assert rates.heavy_quote(30, "local") == rates.quote(30, "local")
++    assert rates.heavy_quote(2, "national") == rates.quote(2, "national")
++
++
++def test_heavy_quote_adds_surcharge_above_30kg():
++    # 4.5 + 1.25 * 32 = 44.5, plus 0.75 * 2 = 1.5
++    assert rates.heavy_quote(32, "local") == 46.0
++
++
++def test_heavy_quote_prorates_partial_kg():
++    assert rates.heavy_quote(31, "local") == rates.quote(31, "local") + 0.75
++    assert rates.heavy_quote(30.5, "local") == pytest.approx(
++        rates.quote(30.5, "local") + 0.375, abs=0.01
++    )
++
++
++def test_heavy_quote_unknown_zone():
++    with pytest.raises(DomainError) as exc:
++        rates.heavy_quote(40, "moon")
++    assert exc.value.code == "E_BAD_INPUT"
++
++
++@pytest.mark.parametrize("weight", [0, -1, float("nan"), float("inf")])
++def test_heavy_quote_bad_weight(weight):
++    with pytest.raises(DomainError) as exc:
++        rates.heavy_quote(weight, "local")
++    assert exc.value.code == "E_BAD_WEIGHT"
++
++
++@pytest.mark.parametrize("weight", [None, "10", True, [5]])
++def test_heavy_quote_bad_type(weight):
++    with pytest.raises(DomainError) as exc:
++        rates.heavy_quote(weight, "local")
++    assert exc.value.code == "E_BAD_INPUT"

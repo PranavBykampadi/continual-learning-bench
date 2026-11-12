@@ -1,0 +1,55 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:05:02
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,16 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def set_credit_limit(customer_id, amount):
++    if amount < 0:
++        raise DomainError("E_BAD_INPUT", str(amount))
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    customer = db.customers[customer_id]
++    customer.credit_limit = amount
++    return customer.credit_limit
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:05:14
+@@ -0,0 +1,24 @@
++import pytest
++
++from parcelo.customers import add_customer, get_customer, set_credit_limit
++from parcelo.errors import DomainError
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    customer = add_customer("Acme")
++    assert set_credit_limit(customer.id, 1200.0) == 1200.0
++    assert get_customer(customer.id).credit_limit == 1200.0
++
++
++def test_set_credit_limit_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        set_credit_limit("C000000", 100.0)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_set_credit_limit_negative_amount_fails():
++    customer = add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        set_credit_limit(customer.id, -1.0)
++    assert err.value.code == "E_BAD_INPUT"
++    assert get_customer(customer.id).credit_limit == 500.0
