@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 run=$1
 agent=$2
 mkdir -p runs/logs
-for arm in "none rich" "placebo rich" "oracle rich" "history rich" "notes rich" "notes sparse"; do
+for arm in "none rich" "placebo rich" "oracle rich" "history rich" "notes rich" "notes sparse" "notes lenient" "memdir rich"; do
 	read -r learner feedback <<<"$arm"
 	.venv/bin/python -m clbench.run --run-name "$run" --learner "$learner" --feedback "$feedback" --agent "$agent" \
 		>"runs/logs/$run-$learner-$feedback.log" 2>&1 &

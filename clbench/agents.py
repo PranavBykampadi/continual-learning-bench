@@ -17,6 +17,9 @@ from clbench.model import PACK
 
 PROMPT = PACK["intro"] + "\n{context}\n# Ticket {id}: {title}\n\n{body}\n"
 CLAUDE_TOOLS = {"": "", "files": "Read,Edit,Write,Glob,Grep", "all": "Read,Edit,Write,Glob,Grep,Bash"}
+# Headless Claude Code asks for approval before any shell command, and nobody is there to approve.
+# These prefixes cover running the project's own scripts and tests and looking around.
+SHELL_ALLOWED = [f"Bash({name}:*)" for name in ("python", "python3", "pytest", "ls", "cat", "grep", "find", "head", "tail", "wc", "diff", "mkdir")]
 SHARED_FOLDERS = ("company", "memory")
 
 
@@ -42,6 +45,8 @@ def claude_backend(model):
             "--no-session-persistence", "--permission-mode", "acceptEdits",
             "--max-budget-usd", "1.0" if tools == "all" else "0.5", "--tools", CLAUDE_TOOLS[tools],
         ]
+        if tools == "all":
+            command += ["--allowedTools", *SHELL_ALLOWED]
         for name in SHARED_FOLDERS:
             folder = Path(cwd).parent / name
             if folder.exists() and folder != Path(cwd):
