@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4105", "action": "escalate", "team": "billing-review", "note": "refund 95.00 on MP-20105, wrong rug sent"}
+{"n": 2, "case": "CS-4105", "action": "tag", "label": "product"}
+{"n": 3, "case": "CS-4105", "action": "close"}

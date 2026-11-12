@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4101", "action": "escalate", "team": "billing-review", "note": "refund 120.00 on MP-20101, lamp arrived cracked"}
+{"n": 2, "case": "CS-4101", "action": "tag", "label": "product"}
+{"n": 3, "case": "CS-4101", "action": "close"}

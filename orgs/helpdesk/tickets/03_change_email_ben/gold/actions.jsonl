@@ -1,0 +1,4 @@
+{"n": 1, "case": "CS-4103", "action": "verify", "customer": "C-1003", "order": "MP-20103", "ok": true}
+{"n": 2, "case": "CS-4103", "action": "set-email", "customer": "C-1003", "old": "ben.okafor@example.com", "new": "b.okafor@example.net"}
+{"n": 3, "case": "CS-4103", "action": "tag", "label": "account"}
+{"n": 4, "case": "CS-4103", "action": "close"}

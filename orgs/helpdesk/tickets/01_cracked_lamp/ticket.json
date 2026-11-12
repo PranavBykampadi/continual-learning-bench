@@ -1,0 +1,11 @@
+{
+  "id": "HD-101",
+  "title": "Lamp arrived cracked",
+  "snapshot": "a",
+  "conventions": [
+    "escalate",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4101\nFrom: Dana Whitfield <dana.whitfield@example.com>\nSubject: Lamp arrived cracked\n\nHi,\n\nThe lamp from order MP-20101 arrived with a crack through the base. I'd like my $120 back, please.\n\nDana"
+}

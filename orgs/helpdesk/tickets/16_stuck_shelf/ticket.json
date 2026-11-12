@@ -1,0 +1,12 @@
+{
+  "id": "HD-116",
+  "title": "Shelf stuck in transit",
+  "snapshot": "b",
+  "conventions": [
+    "credit_cap",
+    "no_dates",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4116\nFrom: Sam Patel <sam.patel@example.com>\nSubject: Order stuck in transit\n\nHi,\n\nOrder MP-20116 (the bamboo shelf) has been stuck in transit for ages. I'd like $25 credit for the delay and a firm delivery date, please.\n\nSam"
+}

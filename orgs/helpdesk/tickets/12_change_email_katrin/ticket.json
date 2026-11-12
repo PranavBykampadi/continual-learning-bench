@@ -1,0 +1,12 @@
+{
+  "id": "HD-112",
+  "title": "Change account email",
+  "snapshot": "b",
+  "conventions": [
+    "identity",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4112\nFrom: Katrin Vogel <katrin.vogel@example.com>\nSubject: New email\n\nHi,\n\nPlease change my account email to katrin.vogel@example.net. My last order was MP-20112.\n\nKatrin"
+}

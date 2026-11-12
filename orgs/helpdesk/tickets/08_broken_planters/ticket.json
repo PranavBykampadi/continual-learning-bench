@@ -1,0 +1,13 @@
+{
+  "id": "HD-108",
+  "title": "Planters broke in transit",
+  "snapshot": "a",
+  "conventions": [
+    "escalate",
+    "credit_cap",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4108\nFrom: Marisol Vega <marisol.vega@example.com>\nSubject: Planters broken\n\nHola,\n\nBoth planters from order MP-20108 broke in transit. I'd like the $180 refunded, and honestly some credit for the hassle, say $30.\n\nMarisol"
+}

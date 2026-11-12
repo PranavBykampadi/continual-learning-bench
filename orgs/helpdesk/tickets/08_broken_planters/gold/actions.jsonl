@@ -1,0 +1,4 @@
+{"n": 1, "case": "CS-4108", "action": "escalate", "team": "billing-review", "note": "refund 180.00 on MP-20108, both planters broken"}
+{"n": 2, "case": "CS-4108", "action": "credit", "customer": "C-1008", "amount": 15.0}
+{"n": 3, "case": "CS-4108", "action": "tag", "label": "product"}
+{"n": 4, "case": "CS-4108", "action": "close"}

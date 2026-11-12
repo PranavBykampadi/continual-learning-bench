@@ -1,0 +1,12 @@
+{
+  "id": "HD-105",
+  "title": "Wrong rug in the box",
+  "snapshot": "a",
+  "conventions": [
+    "escalate",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4105\nFrom: Lucia Fernandez <lucia.fernandez@example.com>\nSubject: Wrong rug\n\nHola,\n\nThe rug I received on order MP-20105 isn't the one I ordered, it's the wrong pattern entirely. I paid $95 for it and want that refunded.\n\nLucía"
+}

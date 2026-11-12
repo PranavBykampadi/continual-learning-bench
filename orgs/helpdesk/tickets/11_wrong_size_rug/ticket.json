@@ -1,0 +1,12 @@
+{
+  "id": "HD-111",
+  "title": "Wrong size rug",
+  "snapshot": "b",
+  "conventions": [
+    "escalate_finance",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4111\nFrom: Etienne Dubois <etienne.dubois@example.com>\nSubject: Wrong rug size\n\nHello,\n\nThe rug on MP-20111 is the 4x6 and I ordered the 5x8. Please refund the $150 and I'll reorder.\n\nÉtienne"
+}

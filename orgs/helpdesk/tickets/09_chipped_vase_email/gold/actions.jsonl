@@ -1,0 +1,5 @@
+{"n": 1, "case": "CS-4109", "action": "escalate", "team": "billing-review", "note": "refund 88.00 on MP-20109, vase chipped"}
+{"n": 2, "case": "CS-4109", "action": "verify", "customer": "C-1009", "order": "MP-20109", "ok": true}
+{"n": 3, "case": "CS-4109", "action": "set-email", "customer": "C-1009", "old": "tom.hargrove@example.com", "new": "tom.hargrove@example.net"}
+{"n": 4, "case": "CS-4109", "action": "tag", "label": "billing"}
+{"n": 5, "case": "CS-4109", "action": "close"}

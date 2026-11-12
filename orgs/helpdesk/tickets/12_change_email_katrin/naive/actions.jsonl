@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4112", "action": "set-email", "customer": "C-1012", "old": "katrin.vogel@example.com", "new": "katrin.vogel@example.net"}
+{"n": 2, "case": "CS-4112", "action": "tag", "label": "email"}
+{"n": 3, "case": "CS-4112", "action": "close"}

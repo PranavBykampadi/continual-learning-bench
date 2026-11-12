@@ -1,0 +1,11 @@
+{
+  "id": "HD-110",
+  "title": "Chipped mugs",
+  "snapshot": "b",
+  "conventions": [
+    "escalate_finance",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4110\nFrom: Hana Kim <hana.kim@example.com>\nSubject: Chipped mugs\n\nHi,\n\nTwo of the mugs in the set from MP-20110 arrived chipped. Could I get the $55 refunded?\n\nThanks,\nHana"
+}

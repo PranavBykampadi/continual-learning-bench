@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4107", "action": "refund", "order": "MP-20107", "amount": 310.0}
+{"n": 2, "case": "CS-4107", "action": "tag", "label": "refund"}
+{"n": 3, "case": "CS-4107", "action": "close"}

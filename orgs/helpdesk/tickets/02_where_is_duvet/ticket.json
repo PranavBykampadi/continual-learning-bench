@@ -1,0 +1,12 @@
+{
+  "id": "HD-102",
+  "title": "Where is my duvet cover",
+  "snapshot": "a",
+  "conventions": [
+    "no_dates",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4102\nFrom: Camille Laurent <camille.laurent@example.com>\nSubject: Order has not arrived\n\nHello,\n\nMy order MP-20102 hasn't arrived yet. Can you tell me exactly which day it will get here? I need to plan around it.\n\nThanks,\nCamille"
+}

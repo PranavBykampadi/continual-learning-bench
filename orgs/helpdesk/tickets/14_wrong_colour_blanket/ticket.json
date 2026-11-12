@@ -1,0 +1,13 @@
+{
+  "id": "HD-114",
+  "title": "Wrong colour blanket and pillow covers",
+  "snapshot": "b",
+  "conventions": [
+    "escalate_finance",
+    "greeting",
+    "no_dates",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4114\nFrom: Diego Morales <diego.morales@example.com>\nSubject: Blanket and pillow covers\n\nHola,\n\nThe blanket from MP-20114 is the wrong colour. I'd like my $70 back. Also, will my pillow covers (MP-20214) get here tomorrow?\n\nDiego"
+}

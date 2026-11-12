@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4104", "action": "credit", "customer": "C-1004", "amount": 40.0}
+{"n": 2, "case": "CS-4104", "action": "tag", "label": "delay"}
+{"n": 3, "case": "CS-4104", "action": "close"}

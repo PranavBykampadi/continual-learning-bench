@@ -1,0 +1,5 @@
+{"n": 1, "case": "CS-4108", "action": "refund", "order": "MP-20108", "amount": 180.0}
+{"n": 2, "case": "CS-4108", "action": "credit", "customer": "C-1008", "amount": 30.0}
+{"n": 3, "case": "CS-4108", "action": "tag", "label": "billing"}
+{"n": 4, "case": "CS-4108", "action": "tag", "label": "product"}
+{"n": 5, "case": "CS-4108", "action": "close"}

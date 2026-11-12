@@ -1,0 +1,4 @@
+{"n": 1, "case": "CS-4118", "action": "escalate", "team": "finance-ops", "note": "refund 200.00 on MP-20118, chair leg snapped"}
+{"n": 2, "case": "CS-4118", "action": "credit", "customer": "C-1018", "amount": 15.0}
+{"n": 3, "case": "CS-4118", "action": "tag", "label": "product"}
+{"n": 4, "case": "CS-4118", "action": "close"}

@@ -1,0 +1,162 @@
+[
+  {
+    "id": "C-1001",
+    "name": "Dana Whitfield",
+    "email": "dana.whitfield@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1002",
+    "name": "Camille Laurent",
+    "email": "camille.laurent@example.com",
+    "locale": "fr-FR",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1003",
+    "name": "Ben Okafor",
+    "email": "ben.okafor@example.com",
+    "locale": "en-GB",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1004",
+    "name": "Jonas Weber",
+    "email": "jonas.weber@example.com",
+    "locale": "de-DE",
+    "tier": "plus",
+    "credit_balance": 15.0
+  },
+  {
+    "id": "C-1005",
+    "name": "Lucia Fernandez",
+    "email": "lucia.fernandez@example.com",
+    "locale": "es-MX",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1006",
+    "name": "Rafael Costa",
+    "email": "rafael.costa@example.com",
+    "locale": "pt-BR",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1007",
+    "name": "Priya Raman",
+    "email": "priya.raman@example.com",
+    "locale": "en-US",
+    "tier": "plus",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1008",
+    "name": "Marisol Vega",
+    "email": "marisol.vega@example.com",
+    "locale": "es-MX",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1009",
+    "name": "Tom Hargrove",
+    "email": "tom.hargrove@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1010",
+    "name": "Hana Kim",
+    "email": "hana.kim@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1011",
+    "name": "Etienne Dubois",
+    "email": "etienne.dubois@example.com",
+    "locale": "fr-FR",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1012",
+    "name": "Katrin Vogel",
+    "email": "katrin.vogel@example.com",
+    "locale": "de-DE",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1013",
+    "name": "Ana Beatriz Lima",
+    "email": "ana.lima@example.com",
+    "locale": "pt-BR",
+    "tier": "plus",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1014",
+    "name": "Diego Morales",
+    "email": "diego.morales@example.com",
+    "locale": "es-MX",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1015",
+    "name": "Olivia Grant",
+    "email": "olivia.grant@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1016",
+    "name": "Sam Patel",
+    "email": "sam.patel@example.com",
+    "locale": "en-US",
+    "tier": "plus",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1017",
+    "name": "Mia Schneider",
+    "email": "mia.schneider@example.com",
+    "locale": "de-DE",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1018",
+    "name": "Henry Boateng",
+    "email": "henry.boateng@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1019",
+    "name": "Grace Tanaka",
+    "email": "grace.tanaka@example.com",
+    "locale": "en-US",
+    "tier": "standard",
+    "credit_balance": 0.0
+  },
+  {
+    "id": "C-1020",
+    "name": "Mateo Silva",
+    "email": "mateo.silva@example.com",
+    "locale": "pt-BR",
+    "tier": "standard",
+    "credit_balance": 0.0
+  }
+]

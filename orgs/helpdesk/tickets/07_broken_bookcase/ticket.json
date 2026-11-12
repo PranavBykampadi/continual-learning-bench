@@ -1,0 +1,12 @@
+{
+  "id": "HD-107",
+  "title": "Broken bookcase and a late order",
+  "snapshot": "a",
+  "conventions": [
+    "escalate",
+    "no_dates",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4107\nFrom: Priya Raman <priya.raman@example.com>\nSubject: Bookcase and napkins\n\nHi,\n\nThe bookcase from order MP-20107 arrived with a broken shelf, so I'm sending it back and want my $310 refunded. Separately, my napkins on MP-20207 haven't shown up. Will they be here before the weekend?\n\nPriya"
+}

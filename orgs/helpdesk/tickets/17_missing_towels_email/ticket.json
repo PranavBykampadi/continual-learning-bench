@@ -1,0 +1,12 @@
+{
+  "id": "HD-117",
+  "title": "Missing tea towels and new email",
+  "snapshot": "b",
+  "conventions": [
+    "identity",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4117\nFrom: Mia Schneider <mia.schneider@example.com>\nSubject: Missing item and email\n\nHallo,\n\nThe tea towel set ($30) was missing from my package for order MP-20117. Please refund it. Also, could you change my account email to mia.schneider@example.net?\n\nMia"
+}

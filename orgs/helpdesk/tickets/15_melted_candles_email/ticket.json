@@ -1,0 +1,12 @@
+{
+  "id": "HD-115",
+  "title": "Melted candles and new email",
+  "snapshot": "b",
+  "conventions": [
+    "escalate_finance",
+    "identity",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4115\nFrom: Olivia Grant <olivia.grant@example.com>\nSubject: Candles and account email\n\nHi,\n\nThe candle set from MP-20115 arrived melted into a block. I'd like the $45 refunded, and please update my account email to olivia.grant@example.net too.\n\nOlivia"
+}

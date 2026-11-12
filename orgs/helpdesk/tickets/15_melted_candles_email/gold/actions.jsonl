@@ -1,0 +1,5 @@
+{"n": 1, "case": "CS-4115", "action": "escalate", "team": "finance-ops", "note": "refund 45.00 on MP-20115, candles melted"}
+{"n": 2, "case": "CS-4115", "action": "verify", "customer": "C-1015", "order": "MP-20115", "ok": true}
+{"n": 3, "case": "CS-4115", "action": "set-email", "customer": "C-1015", "old": "olivia.grant@example.com", "new": "olivia.grant@example.net"}
+{"n": 4, "case": "CS-4115", "action": "tag", "label": "product"}
+{"n": 5, "case": "CS-4115", "action": "close"}

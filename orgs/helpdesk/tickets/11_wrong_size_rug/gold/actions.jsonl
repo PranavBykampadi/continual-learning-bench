@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4111", "action": "escalate", "team": "finance-ops", "note": "refund 150.00 on MP-20111, wrong size sent"}
+{"n": 2, "case": "CS-4111", "action": "tag", "label": "product"}
+{"n": 3, "case": "CS-4111", "action": "close"}

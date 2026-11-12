@@ -1,0 +1,12 @@
+{
+  "CS-4111": {
+    "status": "closed",
+    "tags": [
+      "billing",
+      "product"
+    ],
+    "escalated_to": [
+      "billing-review"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+- The company is Marlowe & Pine, an online retailer of home goods. The support desk handles one case at a time.
+- Customer and order data live in `customers.json` and `orders.json`. Customers are standard or plus tier.
+- Actions go through `python desk.py`. Each one is appended to `actions.jsonl`.
+- Order ids look like `MP-20101`. Case ids look like `CS-4101`.
+- Reply templates are in `macros/` and past cases are in `history/`.
+- Read the customer's message twice and check the order data before you act.

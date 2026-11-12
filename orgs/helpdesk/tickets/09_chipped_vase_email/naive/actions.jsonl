@@ -1,0 +1,4 @@
+{"n": 1, "case": "CS-4109", "action": "refund", "order": "MP-20109", "amount": 88.0}
+{"n": 2, "case": "CS-4109", "action": "set-email", "customer": "C-1009", "old": "tom.hargrove@example.com", "new": "tom.hargrove@example.net"}
+{"n": 3, "case": "CS-4109", "action": "tag", "label": "refund"}
+{"n": 4, "case": "CS-4109", "action": "close"}

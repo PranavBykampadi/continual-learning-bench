@@ -1,0 +1,3 @@
+{"n": 1, "case": "CS-4107", "action": "escalate", "team": "billing-review", "note": "refund 310.00 on MP-20107, bookcase shelf broken"}
+{"n": 2, "case": "CS-4107", "action": "tag", "label": "product"}
+{"n": 3, "case": "CS-4107", "action": "close"}

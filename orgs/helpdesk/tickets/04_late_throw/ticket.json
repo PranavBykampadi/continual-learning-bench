@@ -1,0 +1,13 @@
+{
+  "id": "HD-104",
+  "title": "Late wool throw, wants compensation",
+  "snapshot": "a",
+  "conventions": [
+    "credit_cap",
+    "greeting",
+    "no_dates",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4104\nFrom: Jonas Weber <jonas.weber@example.com>\nSubject: Late order\n\nHello,\n\nMy wool throw (order MP-20104) is more than a week late and nobody has told me why. I think I deserve $40 in credit for the wait, and I'd like to know when it will finally arrive.\n\nJonas"
+}

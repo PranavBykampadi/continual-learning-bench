@@ -1,0 +1,12 @@
+{
+  "id": "HD-118",
+  "title": "Broken chair and wasted weekend",
+  "snapshot": "b",
+  "conventions": [
+    "escalate_finance",
+    "credit_cap",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4118\nFrom: Henry Boateng <henry.boateng@example.com>\nSubject: Chair arrived broken\n\nHi,\n\nOne of the chairs from order MP-20118 has a snapped leg and the pair is unusable. Refund me the $200 please, and I'd like $50 credit for the wasted weekend.\n\nHenry"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "HD-106",
+  "title": "Update account email",
+  "snapshot": "a",
+  "conventions": [
+    "identity",
+    "greeting",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4106\nFrom: Rafael Costa <rafael.costa@example.com>\nSubject: Change my email\n\nHi,\n\nPlease update my account email to rafael.costa@example.net. The order number from my last purchase is MP-20106.\n\nRafael"
+}

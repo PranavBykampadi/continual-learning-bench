@@ -1,0 +1,12 @@
+{
+  "id": "HD-109",
+  "title": "Chipped vase and new email",
+  "snapshot": "a",
+  "conventions": [
+    "escalate",
+    "identity",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4109\nFrom: Tom Hargrove <tom.hargrove@example.com>\nSubject: Vase and account email\n\nHi,\n\nThe vase from order MP-20109 has a chip in it, so I'd like the $88 back. While you're in there, please change my account email to tom.hargrove@example.net, I've lost access to the old one.\n\nTom"
+}

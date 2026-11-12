@@ -1,0 +1,13 @@
+{
+  "id": "HD-113",
+  "title": "Late basket, wants credit and a date",
+  "snapshot": "b",
+  "conventions": [
+    "credit_cap",
+    "greeting",
+    "no_dates",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4113\nFrom: Ana Beatriz Lima <ana.lima@example.com>\nSubject: Order is very late\n\nHello,\n\nMy basket (order MP-20113) was supposed to be here two weeks ago. I want at least $50 credit for this mess, and I want to know the exact date it will arrive.\n\nAna"
+}

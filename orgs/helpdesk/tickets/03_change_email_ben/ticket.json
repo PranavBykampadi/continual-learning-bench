@@ -1,0 +1,11 @@
+{
+  "id": "HD-103",
+  "title": "Change account email",
+  "snapshot": "a",
+  "conventions": [
+    "identity",
+    "tag",
+    "signoff"
+  ],
+  "body": "Case CS-4103\nFrom: Ben Okafor <ben.okafor@example.com>\nSubject: New email address\n\nHi,\n\nI need to change the email on my account to b.okafor@example.net, I don't use the old one anymore. My latest order was MP-20103.\n\nBen"
+}
