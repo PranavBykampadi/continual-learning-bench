@@ -1,0 +1,119 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:53:13
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- invoices: `late_fee_for` returns the late fee on an open invoice (PRC-106)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:53:07
+@@ -1,11 +1,16 @@
+ import uuid
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
++LATE_AFTER_DAYS = 30
++LATE_FEE_PER_DAY = 0.015  # fraction of the invoice amount, per day past LATE_AFTER_DAYS
+ 
++
+ def issue_invoice(shipment_id):
+     shipment = db.shipments[shipment_id]
+     invoice = Invoice(
+@@ -32,3 +37,30 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def late_fee_for(invoice_id: str) -> float:
++    """Return the late fee an invoice has accrued as of now.
++
++    An invoice is late once it is more than LATE_AFTER_DAYS old. Each whole
++    day past that point adds LATE_FEE_PER_DAY of the invoice amount.
++
++    Args:
++        invoice_id: ID of an existing invoice.
++
++    Returns:
++        The fee in dollars, rounded to cents. Zero if the invoice is not late.
++
++    Raises:
++        DomainError: With code E_NOT_FOUND if no invoice has this ID.
++    """
++    invoice = db.invoices.get(invoice_id)
++    if invoice is None:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    issued_at = invoice.issued_at
++    if issued_at.tzinfo is None:
++        # issue_invoice still stores naive UTC times; treat them as UTC.
++        issued_at = issued_at.replace(tzinfo=timezone.utc)
++    days_old = (clock.now() - issued_at).days
++    days_late = max(0, days_old - LATE_AFTER_DAYS)
++    return round(invoice.amount * LATE_FEE_PER_DAY * days_late, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 02:53:12
+@@ -1,9 +1,51 @@
+-from parcelo import customers, invoices, shipments
++from datetime import datetime, timedelta, timezone
+ 
++import pytest
+ 
++from parcelo import clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
+ def test_issue_and_pay():
+     c = customers.add_customer("Acme")
+     s = shipments.create_shipment(c.id, 2, "local")
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def _invoice_issued_days_ago(days):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    now = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++    clock.set_fixed(now)
++    inv.issued_at = now - timedelta(days=days)
++    return inv
++
++
++def test_late_fee_zero_up_to_30_days():
++    inv = _invoice_issued_days_ago(30)
++    assert invoices.late_fee_for(inv.id) == 0.0
++
++
++def test_late_fee_one_day_past_30():
++    inv = _invoice_issued_days_ago(31)
++    assert invoices.late_fee_for(inv.id) == round(7.0 * 0.015, 2)
++
++
++def test_late_fee_scales_per_day():
++    inv = _invoice_issued_days_ago(40)
++    assert invoices.late_fee_for(inv.id) == round(7.0 * 0.015 * 10, 2)
++
++
++def test_late_fee_accepts_naive_issued_at():
++    inv = _invoice_issued_days_ago(33)
++    inv.issued_at = inv.issued_at.replace(tzinfo=None)
++    assert invoices.late_fee_for(inv.id) == round(7.0 * 0.015 * 3, 2)
++
++
++def test_late_fee_unknown_invoice_raises():
++    with pytest.raises(DomainError) as err:
++        invoices.late_fee_for("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"

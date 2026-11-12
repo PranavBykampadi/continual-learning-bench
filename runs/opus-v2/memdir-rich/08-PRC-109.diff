@@ -1,0 +1,141 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:57:56
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add add_address and Address model for delivery addresses (PRC-109)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:57:56
+@@ -1,6 +1,8 @@
+ import uuid
+ 
+-from parcelo.models import Customer
++from parcelo import audit, ids
++from parcelo.errors import DomainError
++from parcelo.models import Address, Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +29,21 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def add_address(customer_id, line, city):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if not isinstance(line, str) or not line.strip():
++        raise DomainError("E_BAD_INPUT", "street line required")
++    if not isinstance(city, str) or not city.strip():
++        raise DomainError("E_BAD_INPUT", "city required")
++    address = Address(
++        id=ids.new_id("adr"),
++        customer_id=customer_id,
++        line=line.strip(),
++        city=city.strip(),
++    )
++    db.addresses[address.id] = address
++    audit.record("address.created", address.id, customer_id=customer_id)
++    return address
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:57:56
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Address:
++    id: str
++    customer_id: str
++    line: str
++    city: str
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 02:57:56
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.addresses = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.addresses.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_address.py b/tests/unit/test_customers_address.py
+--- a/tests/unit/test_customers_address.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_address.py	2026-11-12 02:57:56
+@@ -0,0 +1,60 @@
++import pytest
++
++from parcelo import audit, customers
++from parcelo.errors import DomainError
++from parcelo.models import Address
++from parcelo.store import db
++
++
++@pytest.fixture
++def customer():
++    c = customers.add_customer("Acme")
++    audit.LOG.clear()
++    return c
++
++
++def test_add_address_creates_and_stores(customer):
++    addr = customers.add_address(customer.id, "1 Main St", "Springfield")
++    assert isinstance(addr, Address)
++    assert addr.id.startswith("adr_")
++    assert addr.customer_id == customer.id
++    assert addr.line == "1 Main St"
++    assert addr.city == "Springfield"
++    assert db.addresses == {addr.id: addr}
++    assert audit.LOG[-1]["action"] == "address.created"
++    assert audit.LOG[-1]["entity_id"] == addr.id
++
++
++def test_multiple_addresses_get_distinct_ids(customer):
++    a = customers.add_address(customer.id, "1 Main St", "Springfield")
++    b = customers.add_address(customer.id, "2 Oak Ave", "Shelbyville")
++    assert a.id != b.id
++    assert len(db.addresses) == 2
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.add_address("nope", "1 Main St", "Springfield")
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.addresses == {}
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize(
++    "line,city",
++    [("", "Springfield"), ("   ", "Springfield"), (None, "Springfield"),
++     ("1 Main St", ""), ("1 Main St", "  "), ("1 Main St", None)],
++)
++def test_empty_line_or_city_fails(customer, line, city):
++    with pytest.raises(DomainError) as err:
++        customers.add_address(customer.id, line, city)
++    assert err.value.code == "E_BAD_INPUT"
++    assert db.addresses == {}
++    assert audit.LOG == []
++
++
++def test_reset_clears_addresses(customer):
++    from parcelo import store
++    customers.add_address(customer.id, "1 Main St", "Springfield")
++    store.reset()
++    assert db.addresses == {}

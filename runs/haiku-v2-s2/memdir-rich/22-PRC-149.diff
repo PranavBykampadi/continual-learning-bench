@@ -1,0 +1,166 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:17:35
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- shipments: split a created shipment into several (PRC-149)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 03:17:23
+@@ -1,3 +1,5 @@
++from decimal import Decimal, InvalidOperation
++
+ from parcelo import clock, events, ids
+ from parcelo.errors import DomainError
+ from parcelo.models import Shipment
+@@ -28,3 +30,54 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def split_shipment(shipment_id, weights):
++    """Replace a "created" shipment with one new shipment per weight.
++
++    Checks, in order (nothing is changed unless all pass):
++    missing shipment -> E_NOT_FOUND; status not "created" -> E_BAD_STATE;
++    weights not a non-empty list -> E_BAD_INPUT; any weight not a positive
++    number -> E_BAD_WEIGHT; weights not summing to the original weight -> E_BAD_WEIGHT.
++    The original is marked "split". Returns the new shipments in weight order.
++    """
++    original = get_shipment(shipment_id)
++    if original.status != "created":
++        raise DomainError("E_BAD_STATE", f"{shipment_id} is {original.status}")
++    if not isinstance(weights, (list, tuple)) or len(weights) == 0:
++        raise DomainError("E_BAD_INPUT", "weights must be a non-empty list")
++
++    decimals = []
++    for w in weights:
++        try:
++            d = Decimal(str(w))
++        except (InvalidOperation, TypeError, ValueError):
++            raise DomainError("E_BAD_WEIGHT", str(w))
++        if not d.is_finite() or d <= 0:
++            raise DomainError("E_BAD_WEIGHT", str(w))
++        decimals.append(d)
++
++    if sum(decimals, Decimal(0)) != Decimal(str(original.weight_kg)):
++        raise DomainError("E_BAD_WEIGHT", f"weights do not sum to {original.weight_kg}")
++
++    new_shipments = []
++    for w in weights:
++        new_shipments.append(
++            Shipment(
++                id=ids.new_id("shp"),
++                customer_id=original.customer_id,
++                weight_kg=w,
++                zone=original.zone,
++                created_at=clock.now(),
++            )
++        )
++    for s in new_shipments:
++        db.shipments[s.id] = s
++
++    original.status = "split"
++    events.emit(
++        "shipment.split",
++        original.id,
++        child_ids=[s.id for s in new_shipments],
++    )
++    return new_shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_split_shipment.py b/tests/unit/test_split_shipment.py
+--- a/tests/unit/test_split_shipment.py	1969-12-31 19:00:00
++++ b/tests/unit/test_split_shipment.py	2026-11-12 03:17:34
+@@ -0,0 +1,95 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++
++
++def _make(weight=4.0, zone="national"):
++    c = customers.add_customer("Acme")
++    return shipments.create_shipment(c.id, weight, zone)
++
++
++def test_split_creates_one_shipment_per_weight_in_order():
++    s = _make(4.0)
++    parts = shipments.split_shipment(s.id, [1.5, 2.5])
++    assert [p.weight_kg for p in parts] == [1.5, 2.5]
++    assert all(p.id.startswith("shp_") for p in parts)
++    assert parts[0].id != parts[1].id
++
++
++def test_split_children_keep_customer_and_zone_and_start_created():
++    s = _make(4.0, "international")
++    parts = shipments.split_shipment(s.id, [1.0, 1.0, 2.0])
++    for p in parts:
++        assert p.customer_id == s.customer_id
++        assert p.zone == "international"
++        assert p.status == "created"
++        assert p.created_at is not None
++
++
++def test_split_marks_original_split_and_stores_children():
++    s = _make(4.0)
++    parts = shipments.split_shipment(s.id, [1.5, 2.5])
++    assert s.status == "split"
++    assert shipments.get_shipment(s.id) is s
++    for p in parts:
++        assert shipments.get_shipment(p.id) is p
++
++
++def test_split_emits_event_with_child_ids():
++    s = _make(4.0)
++    events.OUTBOX.clear()
++    parts = shipments.split_shipment(s.id, [1.5, 2.5])
++    assert events.OUTBOX[-1]["name"] == "shipment.split"
++    assert events.OUTBOX[-1]["entity_id"] == s.id
++    assert events.OUTBOX[-1]["payload"]["child_ids"] == [p.id for p in parts]
++
++
++def test_split_missing_shipment_raises_not_found_and_emits_nothing():
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment("shp_nope", [1.0])
++    assert err.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("status", ["split", "delivered", "cancelled"])
++def test_split_requires_created_status(status):
++    s = _make(4.0)
++    s.status = status
++    before = len(shipments.db.shipments)
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment(s.id, [1.5, 2.5])
++    assert err.value.code == "E_BAD_STATE"
++    assert len(shipments.db.shipments) == before
++    assert s.status == status
++    assert events.OUTBOX == []
++
++
++def test_split_weights_must_sum_to_original():
++    s = _make(4.0)
++    before = len(shipments.db.shipments)
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment(s.id, [1.5, 2.0])
++    assert err.value.code == "E_BAD_WEIGHT"
++    assert s.status == "created"
++    assert len(shipments.db.shipments) == before
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("weights", [[], [4.0, 0.0], [5.0, -1.0], [None, 4.0], ["abc", 4.0]])
++def test_split_rejects_bad_weights(weights):
++    s = _make(4.0)
++    with pytest.raises(DomainError) as err:
++        shipments.split_shipment(s.id, weights)
++    assert e

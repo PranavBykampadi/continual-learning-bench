@@ -1,0 +1,122 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:12:20
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add volume_report per-customer shipment counts and volume tiers (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:12:12
+@@ -14,6 +14,34 @@
+     return counts
+ 
+ 
++# Volume tiers as (minimum shipment count, label), highest first. Copied from the
++# legacy billing thresholds so this module does not depend on parcelo.legacy.
++VOLUME_TIERS = (
++    (50, "bulk"),
++    (10, "regular"),
++    (0, "starter"),
++)
++
++
++def _volume_tier(shipment_count):
++    for minimum, label in VOLUME_TIERS:
++        if shipment_count >= minimum:
++            return label
++    return VOLUME_TIERS[-1][1]
++
++
++def volume_report():
++    """Return {customer_id: {"shipments": count, "tier": label}} for every customer."""
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_volume.py b/tests/unit/test_reports_volume.py
+--- a/tests/unit/test_reports_volume.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_volume.py	2026-11-12 03:12:29
+@@ -0,0 +1,69 @@
++from parcelo import ids, reports, shipments
++from parcelo.models import Customer, Shipment
++from parcelo.store import db
++
++
++def _customer():
++    customer = Customer(id=ids.new_id("cus"), name="Acme")
++    db.customers[customer.id] = customer
++    return customer.id
++
++
++def _ship(customer_id, n, status="created"):
++    for _ in range(n):
++        shipment = Shipment(
++            id=ids.new_id("shp"), customer_id=customer_id, weight_kg=1.0, zone="local", status=status
++        )
++        db.shipments[shipment.id] = shipment
++
++
++def test_empty_store_gives_empty_report():
++    assert reports.volume_report() == {}
++
++
++def test_customer_without_shipments_is_included_as_starter():
++    cid = _customer()
++    assert cid == "cus_000001"
++    assert reports.volume_report() == {"cus_000001": {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_per_customer():
++    a = _customer()
++    b = _customer()
++    _ship(a, 3)
++    _ship(b, 1)
++    assert reports.volume_report() == {
++        a: {"shipments": 3, "tier": "starter"},
++        b: {"shipments": 1, "tier": "starter"},
++    }
++
++
++def test_tier_boundaries():
++    expected = {9: "starter", 10: "regular", 49: "regular", 50: "bulk", 51: "bulk"}
++    customer_for = {}
++    for n in expected:
++        customer_for[n] = _customer()
++        _ship(customer_for[n], n)
++    report = reports.volume_report()
++    for n, tier in expected.items():
++        assert report[customer_for[n]] == {"shipments": n, "tier": tier}
++
++
++def test_counts_shipments_in_every_status():
++    cid = _customer()
++    _ship(cid, 1, status="created")
++    _ship(cid, 1, status="delivered")
++    _ship(cid, 1, status="cancelled")
++    assert reports.volume_report()[cid]["shipments"] == 3
++
++
++def test_shipments_for_unknown_customers_are_ignored():
++    cid = _customer()
++    _ship("cus_999999", 2)
++    assert reports.volume_report() == {cid: {"shipments": 0, "tier": "starter"}}
++
++
++def test_works_with_shipments_service():
++    cid = _customer()
++    shipments.create_shipment(cid, 2.0, "local")
++    assert reports.volume_report() == {cid: {"shipments": 1, "tier": "starter"}}

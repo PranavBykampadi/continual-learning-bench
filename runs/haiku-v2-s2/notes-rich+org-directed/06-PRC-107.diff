@@ -1,0 +1,102 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:54:40
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- shipments: mark shipment delivered (PRC-107)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:17:53
++++ b/parcelo/shipments.py	2026-11-12 02:54:37
+@@ -28,3 +28,25 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_delivered(shipment_id: str) -> Shipment:
++    """Mark a shipment as delivered.
++
++    Args:
++        shipment_id: Id of the shipment that was delivered.
++
++    Returns:
++        The updated Shipment.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the shipment does not exist, or E_BAD_STATE if
++            it is cancelled or already delivered.
++    """
++    shipment = get_shipment(shipment_id)
++    if shipment.status in ("cancelled", "delivered"):
++        raise DomainError("E_BAD_STATE", f"{shipment_id} is {shipment.status}")
++    shipment.status = "delivered"
++    shipment.delivered_at = clock.now()
++    audit.record("shipment.delivered", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_mark_delivered.py b/tests/unit/test_shipments_mark_delivered.py
+--- a/tests/unit/test_shipments_mark_delivered.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_mark_delivered.py	2026-11-12 02:54:39
+@@ -0,0 +1,58 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, shipments
++from parcelo.errors import DomainError
++
++
++def _shipment():
++    c = customers.add_customer("Acme")
++    return shipments.create_shipment(c.id, 1.5, "national")
++
++
++def test_mark_delivered_sets_status_and_time():
++    moment = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    s = _shipment()
++
++    result = shipments.mark_delivered(s.id)
++
++    assert result is s
++    assert s.status == "delivered"
++    assert s.delivered_at == moment
++
++
++def test_mark_delivered_records_audit():
++    s = _shipment()
++
++    shipments.mark_delivered(s.id)
++
++    assert audit.LOG[-1]["action"] == "shipment.delivered"
++    assert audit.LOG[-1]["entity_id"] == s.id
++
++
++def test_mark_delivered_unknown_shipment():
++    with pytest.raises(DomainError) as err:
++        shipments.mark_delivered("shp_missing")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_mark_delivered_twice_fails():
++    s = _shipment()
++    shipments.mark_delivered(s.id)
++
++    with pytest.raises(DomainError) as err:
++        shipments.mark_delivered(s.id)
++    assert err.value.code == "E_BAD_STATE"
++
++
++def test_mark_delivered_cancelled_fails():
++    s = _shipment()
++    s.status = "cancelled"
++
++    with pytest.raises(DomainError) as err:
++        shipments.mark_delivered(s.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert s.status == "cancelled"
++    assert s.delivered_at is None

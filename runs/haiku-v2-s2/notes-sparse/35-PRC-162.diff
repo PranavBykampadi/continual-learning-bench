@@ -1,0 +1,69 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:17:33
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- invoices: list invoices by status (PRC-162)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:17:33
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,9 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def invoices_by_status(status):
++    if not isinstance(status, str) or status not in ("open", "paid"):
++        raise DomainError("E_BAD_INPUT", status)
++    return [i for i in db.invoices.values() if i.status == status]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 03:17:36
+@@ -1,4 +1,7 @@
++import pytest
++
+ from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
+ 
+ 
+ def test_issue_and_pay():
+@@ -7,3 +10,25 @@
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_invoices_by_status():
++    c = customers.add_customer("Acme")
++    s1 = shipments.create_shipment(c.id, 2, "local")
++    s2 = shipments.create_shipment(c.id, 3, "local")
++    inv1 = invoices.issue_invoice(s1.id)
++    inv2 = invoices.issue_invoice(s2.id)
++    invoices.mark_paid(inv2.id)
++    assert invoices.invoices_by_status("open") == [inv1]
++    assert invoices.invoices_by_status("paid") == [inv2]
++
++
++def test_invoices_by_status_empty():
++    assert invoices.invoices_by_status("paid") == []
++
++
++@pytest.mark.parametrize("bad", ["void", "", "OPEN", None, 1, True])
++def test_invoices_by_status_rejects_bad_status(bad):
++    with pytest.raises(DomainError) as exc:
++        invoices.invoices_by_status(bad)
++    assert exc.value.code == "E_BAD_INPUT"

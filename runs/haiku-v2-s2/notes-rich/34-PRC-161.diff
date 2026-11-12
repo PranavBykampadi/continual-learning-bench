@@ -1,0 +1,175 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:12:51
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-161] customers: add volume rebate for a customer
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:12:50
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.rebate_for(customer_id)`: volume rebate on the customer's paid invoices: 3% at 10+ shipments, 6% at 50+, zero below 10. Returns `Money`. `raises E_NOT_FOUND if the customer does not exist`. Emits no events. Read-only, so idempotent by nature (no state change). Not a list.
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:12:34
+@@ -1,6 +1,8 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +29,25 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned on the customer's paid invoices.
++
++    3% at 10+ shipments, 6% at 50+, zero below 10. Read-only.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    shipment_ids = {s.id for s in db.shipments.values() if s.customer_id == customer_id}
++    count = len(shipment_ids)
++    if count >= 50:
++        rate = 0.06
++    elif count >= 10:
++        rate = 0.03
++    else:
++        return Money.zero()
++    paid = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.status == "paid" and invoice.shipment_id in shipment_ids:
++            paid = paid + Money.parse(invoice.amount)
++    return paid.scale(rate)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rebate.py b/tests/unit/test_rebate.py
+--- a/tests/unit/test_rebate.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rebate.py	2026-11-12 03:12:46
+@@ -0,0 +1,111 @@
++import pytest
++
++from parcelo import customers, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Invoice, Shipment
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _add_shipments(customer_id, n):
++    """Create n shipments for the customer; return their ids."""
++    out = []
++    for _ in range(n):
++        s = Shipment(id=ids.new_id("shp"), customer_id=customer_id, weight_kg=1.0, zone="local")
++        db.shipments[s.id] = s
++        out.append(s.id)
++    return out
++
++
++def _add_invoice(shipment_id, amount, status="paid"):
++    inv = Invoice(id=ids.new_id("inv"), shipment_id=shipment_id, amount=amount, status=status)
++    db.invoices[inv.id] = inv
++    return inv
++
++
++def _snapshot():
++    return (
++        dict(db.customers),
++        dict(db.shipments),
++        dict(db.invoices),
++        list(events.OUTBOX),
++    )
++
++
++def test_zero_below_ten_shipments():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 9)
++    _add_invoice(sids[0], 100.0)
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_three_percent_at_ten_shipments():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 10)
++    _add_invoice(sids[0], 100.0)
++    _add_invoice(sids[0], 50.0)
++    assert customers.rebate_for(c.id) == Money(450)
++
++
++def test_three_percent_just_below_fifty():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 49)
++    _add_invoice(sids[0], 200.0)
++    assert customers.rebate_for(c.id) == Money(600)
++
++
++def test_six_percent_at_fifty_shipments():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 50)
++    _add_invoice(sids[0], 100.0)
++    assert customers.rebate_for(c.id) == Money(600)
++
++
++def test_only_paid_invoices_count():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 10)
++    _add_invoice(sids[0], 100.0, status="paid")
++    _add_invoice(sids[0], 999.0, status="open")
++    assert customers.rebate_for(c.id) == Money(300)
++
++
++def test_other_customers_invoices_excluded():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Bolt")
++    sids = _add_shipments(a.id, 10)
++    _add_invoice(sids[0], 100.0)
++    sids = _add_shipments(b.id, 10)
++    _add_invoice(sids[0], 1000.0)
++    assert customers.rebate_for(a.id) == Money(300)
++
++
++def test_returns_money_type():
++    c = customers.add_customer("Acme")
++    assert isinstance(customers.rebate_for(c.id), Money)
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for("nope")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_read_only_outbox_and_state_unchanged_on_success():
++    c = customers.add_customer("Acme")
++    sids = _add_shipments(c.id, 10)
++    _add_invoice(sids[0], 100.0)
++    events.OUTBOX.clear()
++    before = _snapshot()
++    customers.rebate_for(c.id)
++    assert _snapshot() == before
++    assert events.OUTBOX == []
++
++
++def test_read_only_outbox_and_state_unchanged_on_rejected_call():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++    before = _snapshot()
++    with pytest.raises(DomainError):
++        customers.rebate_for("nope")
++    assert _snapshot() == before
++    assert events.OUTBOX == []

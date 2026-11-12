@@ -1,0 +1,167 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:13:07
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: flag customers that need review (PRC-153)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:13:08
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.needs_review(customer_id)`: True if the customer has too many open invoices or too large an open balance (limits in `settings.py`); raises E_NOT_FOUND
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:13:05
+@@ -1,6 +1,9 @@
+ import uuid
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +30,34 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id: str) -> bool:
++    """Return True if the customer's open invoices need a manual account review.
++
++    A review is needed when the customer has more than
++    settings.OPEN_INVOICE_COUNT_REVIEW_LIMIT open invoices, or their open invoices
++    total more than settings.OPEN_BALANCE_REVIEW_LIMIT.
++
++    Args:
++        customer_id: Id of the customer to check.
++
++    Returns:
++        True if the customer needs a review, False otherwise.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the customer does not exist.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    open_count = 0
++    open_balance = Money.zero()
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            open_count += 1
++            open_balance = open_balance + Money.parse(invoice.amount)
++    return (
++        open_count > settings.OPEN_INVOICE_COUNT_REVIEW_LIMIT
++        or settings.OPEN_BALANCE_REVIEW_LIMIT < open_balance
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:13:01
+@@ -0,0 +1,9 @@
++from parcelo.money import Money
++
++# Business thresholds. Finance and product may ask us to change these, so keep them here.
++
++# A customer with more than this many open invoices needs a manual review.
++OPEN_INVOICE_COUNT_REVIEW_LIMIT = 3
++
++# A customer whose open invoices total more than this needs a manual review.
++OPEN_BALANCE_REVIEW_LIMIT = Money.parse("250.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_needs_review.py b/tests/unit/test_customers_needs_review.py
+--- a/tests/unit/test_customers_needs_review.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_needs_review.py	2026-11-12 03:13:17
+@@ -0,0 +1,91 @@
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++from parcelo.models import Invoice, Shipment
++from parcelo.store import db
++
++
++def _add_open_invoices(customer_id, amounts, status="open"):
++    shipment = Shipment(
++        id=f"shp_test_{len(db.shipments)}",
++        customer_id=customer_id,
++        weight_kg=1.0,
++        zone="local",
++    )
++    db.shipments[shipment.id] = shipment
++    for amount in amounts:
++        invoice = Invoice(
++            id=f"INV-test-{len(db.invoices)}",
++            shipment_id=shipment.id,
++            amount=amount,
++            status=status,
++        )
++        db.invoices[invoice.id] = invoice
++
++
++def test_no_invoices_does_not_need_review():
++    c = customers.add_customer("Acme")
++    assert customers.needs_review(c.id) is False
++
++
++def test_three_open_invoices_is_not_enough():
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [1.0, 1.0, 1.0])
++    assert customers.needs_review(c.id) is False
++
++
++def test_more_than_three_open_invoices_needs_review():
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [1.0, 1.0, 1.0, 1.0])
++    assert customers.needs_review(c.id) is True
++
++
++def test_open_balance_at_limit_does_not_need_review():
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [250.00])
++    assert customers.needs_review(c.id) is False
++
++
++def test_open_balance_over_limit_needs_review():
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [125.00, 125.01])
++    assert customers.needs_review(c.id) is True
++
++
++def test_balance_is_summed_in_cents_not_floats():
++    # Sums to exactly 250.00. Float addition can land just above 250.00 here,
++    # which would wrongly flag the customer, so the total must be computed in Money.
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [249.70, 0.10, 0.20])
++    assert customers.needs_review(c.id) is False
++
++
++def test_paid_invoices_are_ignored():
++    c = customers.add_customer("Acme")
++    _add_open_invoices(c.id, [100.0, 100.0, 100.0, 100.0], status="paid")
++    _add_open_invoices(c.id, [10.0])
++    assert customers.needs_review(c.id) is False
++
++
++def test_other_customers_invoices_are_ignored():
++    c = customers.add_customer("Acme")
++    other = customers.add_customer("Other")
++    _add_open_invoices(other.id, [200.0, 200.0])
++    _add_open_invoices(c.id, [1.0])
++    assert customers.needs_review(c.id) is False
++
++
++def test_unknown_customer_raises_not_found():
++  

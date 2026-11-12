@@ -1,0 +1,60 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:01:04
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Voucher:
++    id: str
++    customer_id: str
++    amount: float
++    issued_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 03:01:03
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.vouchers = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.vouchers.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/vouchers.py b/parcelo/vouchers.py
+--- a/parcelo/vouchers.py	1969-12-31 19:00:00
++++ b/parcelo/vouchers.py	2026-11-12 03:01:05
+@@ -0,0 +1,25 @@
++from parcelo import clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.money import Money
++from parcelo.store import db
++
++MAX_VOUCHER = Money.parse("150.00")
++
++
++def issue_voucher(customer_id, amount):
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    value = Money.parse(amount)
++    if value.cents <= 0:
++        raise DomainError("E_BAD_INPUT", "voucher amount must be positive")
++    if MAX_VOUCHER < value:
++        raise DomainError("E_LIMIT", "voucher amount exceeds 150.00")
++    voucher = Voucher(
++        id=ids.new_id("VCH"),
++        customer_id=customer_id,
++        amount=amount,
++        issued_at=clock.now(),
++    )
++    db.vouchers[voucher.id] = voucher
++    return voucher

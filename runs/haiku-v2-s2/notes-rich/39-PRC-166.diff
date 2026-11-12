@@ -1,0 +1,150 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:16:13
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-166] invoices: escalate large unpaid invoices to collections
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:16:12
+@@ -15,3 +15,14 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.escalate_invoice(invoice_id)`: set an open invoice to "escalated" so the collections team picks it up. Only open invoices of at least `ESCALATION_MIN_AMOUNT` (500.00 USD, see `parcelo/settings.py`) can be escalated.
++  - Returns: `Invoice` (not Money; the `amount` field is the invoice total)
++  - `raises E_NOT_FOUND if the invoice does not exist`
++  - `raises E_BAD_STATE if the invoice is paid or otherwise not open`
++  - `raises E_LIMIT if the invoice amount is below 500.00 USD`
++  - Emits `invoice.escalated` (only on the first escalation)
++  - Idempotent: yes. An invoice that is already escalated is returned unchanged, with no error and no second event.
++  - Not a list.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:16:10
+@@ -1,8 +1,12 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
++from parcelo.settings import ESCALATION_MIN_AMOUNT
+ from parcelo.store import db
+ 
+ 
+@@ -32,3 +36,22 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def escalate_invoice(invoice_id):
++    """Send an open invoice of at least ESCALATION_MIN_AMOUNT to collections.
++
++    Idempotent: an already escalated invoice is returned unchanged, with no event.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status == "escalated":
++        return invoice
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", invoice_id)
++    if Money.parse(invoice.amount) < ESCALATION_MIN_AMOUNT:
++        raise DomainError("E_LIMIT", invoice_id)
++    invoice.status = "escalated"
++    events.emit("invoice.escalated", invoice.id)
++    return invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:16:07
+@@ -0,0 +1,6 @@
++from parcelo.money import Money
++
++# Business limits. Finance owns these values; change them here only.
++
++# Open invoices below this amount cannot be escalated to collections.
++ESCALATION_MIN_AMOUNT = Money.parse("500.00")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoice_escalation.py b/tests/unit/test_invoice_escalation.py
+--- a/tests/unit/test_invoice_escalation.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoice_escalation.py	2026-11-12 03:16:17
+@@ -0,0 +1,68 @@
++import pytest
++
++from parcelo import events, invoices
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++from parcelo.settings import ESCALATION_MIN_AMOUNT
++from parcelo.store import db
++
++
++def _add_invoice(invoice_id, amount, status="open"):
++    invoice = Invoice(id=invoice_id, shipment_id="shp_x", amount=amount, status=status)
++    db.invoices[invoice_id] = invoice
++    return invoice
++
++
++def test_threshold_is_500_dollars():
++    assert str(ESCALATION_MIN_AMOUNT) == "500.00 USD"
++
++
++def test_escalate_large_open_invoice():
++    inv = _add_invoice("INV-big", 500.0)
++    result = invoices.escalate_invoice("INV-big")
++    assert result is inv
++    assert result.status == "escalated"
++    assert [e["name"] for e in events.OUTBOX] == ["invoice.escalated"]
++    assert events.OUTBOX[0]["entity_id"] == "INV-big"
++
++
++def test_escalate_above_threshold():
++    _add_invoice("INV-huge", 1250.75)
++    assert invoices.escalate_invoice("INV-huge").status == "escalated"
++
++
++def test_below_threshold_is_rejected_and_unchanged():
++    inv = _add_invoice("INV-small", 499.99)
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice("INV-small")
++    assert err.value.code == "E_LIMIT"
++    assert inv.status == "open"
++    assert events.OUTBOX == []
++
++
++def test_paid_invoice_is_bad_state_and_unchanged():
++    inv = _add_invoice("INV-paid", 900.0, status="paid")
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice("INV-paid")
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++    assert events.OUTBOX == []
++
++
++def test_missing_invoice_is_not_found_and_store_unchanged():
++    _add_invoice("INV-other", 800.0)
++    before = dict(db.invoices)
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"
++    assert db.invoices == before
++    assert events.OUTBOX == []
++
++
++def test_escalate_is_idempotent_with_one_event():
++    inv = _add_invoice("INV-twice", 600.0)
++    invoices.escalate_invoice("INV-twice")
++    again = invoices.escalate_invoice("INV-twice")
++    assert again is inv
++    assert again.status == "escalated"
++    assert len(events.OUTBOX) == 1

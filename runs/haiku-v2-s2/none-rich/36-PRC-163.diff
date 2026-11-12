@@ -1,0 +1,58 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:02:35
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: lock customer account after suspicious logins (PRC-163)
+ - [PRC-171] platform: release notes script reads the new bullet format
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:02:35
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.lock_customer(customer_id)`: set the customer's `locked` flag; raises `DomainError` (`E_UNKNOWN_CUSTOMER`) if the customer does not exist
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:02:34
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,14 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def lock_customer(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    customer.locked = True
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:02:33
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass

@@ -1,0 +1,116 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:02:42
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- rates: insurance fee for declared value (PRC-144)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 03:02:35
+@@ -1,7 +1,16 @@
++from parcelo.errors import DomainError
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++# Fuel surcharge percentage by zone. Same values as fuel_surcharge in
++# parcelo/legacy/billing.py; kept here because new code must not import legacy.
++# Finance owns these numbers.
++FUEL_SURCHARGE_PCT = {"local": 0.0, "national": 4.0, "international": 9.5}
++INSURANCE_RATE_PCT = 2.0
++INSURANCE_MIN_FEE = 1.00
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+         raise ValueError("unknown zone: %s" % zone)
+@@ -12,3 +21,30 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value: float, zone: str) -> float:
++    """Return the insurance fee for a shipment with a declared value.
++
++    The fee is 2% of the declared value plus the zone's fuel surcharge
++    percentage of the declared value, with a minimum fee of 1.00. It is
++    rounded to cents only at the end.
++
++    Args:
++        declared_value: Declared value of the shipment in dollars. Must be positive.
++        zone: One of the keys in FUEL_SURCHARGE_PCT.
++
++    Returns:
++        The insurance fee in dollars, rounded to cents.
++
++    Raises:
++        DomainError: E_BAD_ZONE if the zone is unknown, or E_BAD_INPUT if the
++            declared value is not positive.
++    """
++    if zone not in FUEL_SURCHARGE_PCT:
++        raise DomainError("E_BAD_ZONE", f"unknown zone: {zone}")
++    if declared_value <= 0:
++        raise DomainError("E_BAD_INPUT", "declared value must be positive")
++    pct = INSURANCE_RATE_PCT + FUEL_SURCHARGE_PCT[zone]
++    fee = declared_value * pct / 100.0
++    return round(max(fee, INSURANCE_MIN_FEE), 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 03:02:48
+@@ -1,6 +1,7 @@
+ import pytest
+ 
+ from parcelo import rates
++from parcelo.errors import DomainError
+ 
+ 
+ def test_quote_local():
+@@ -10,3 +11,42 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_insurance_fee_local():
++    # 2% + 0% fuel surcharge
++    assert rates.insurance_fee(1000, "local") == 20.0
++
++
++def test_insurance_fee_national():
++    # 2% + 4% fuel surcharge
++    assert rates.insurance_fee(100, "national") == 6.0
++
++
++def test_insurance_fee_international():
++    # 2% + 9.5% fuel surcharge
++    assert rates.insurance_fee(100, "international") == 11.5
++
++
++def test_insurance_fee_minimum():
++    assert rates.insurance_fee(10, "local") == 1.0
++
++
++def test_insurance_fee_rounds_to_cents():
++    # 33.33 * 0.02 = 0.6666 -> minimum applies
++    assert rates.insurance_fee(33.33, "local") == 1.0
++    # 333.33 * 0.06 = 19.9998 -> 20.00
++    assert rates.insurance_fee(333.33, "national") == 20.0
++
++
++def test_insurance_fee_unknown_zone():
++    with pytest.raises(DomainError) as exc:
++        rates.insurance_fee(100, "moon")
++    assert exc.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("value", [0, -5])
++def test_insurance_fee_non_positive_value(value):
++    with pytest.raises(DomainError) as exc:
++        rates.insurance_fee(value, "local")
++    assert exc.value.code == "E_BAD_INPUT"

@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:09:38
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: list customers by tier (PRC-155)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:09:38
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.customers_by_tier(tier)`: list customers on a tier; raises `ValueError` for an unknown tier
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:09:37
+@@ -20,6 +20,12 @@
+     return db.customers[customer_id]
+ 
+ 
++def customers_by_tier(tier):
++    if tier not in TIERS:
++        raise ValueError("bad tier")
++    return [c for c in db.customers.values() if c.tier == tier]
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 03:09:42
+@@ -0,0 +1,92 @@
++import pytest
++
++from parcelo import audit, clock, customers, events, ids, store
++from parcelo.customers import TIERS, customers_by_tier
++
++
++@pytest.fixture(autouse=True)
++def clean_state():
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++    yield
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++
++
++def _snapshot():
++    return (
++        dict(store.db.customers),
++        dict(store.db.shipments),
++        dict(store.db.invoices),
++        len(audit.LOG),
++        len(events.OUTBOX),
++    )
++
++
++def test_returns_only_customers_on_tier():
++    std = customers.add_customer("Acme", tier="standard")
++    gold = customers.add_customer("Globex", tier="gold")
++    result = customers_by_tier("gold")
++    assert result == [gold]
++    assert std not in result
++
++
++def test_returns_all_matching_customers():
++    a = customers.add_customer("A", tier="gold")
++    b = customers.add_customer("B", tier="gold")
++    customers.add_customer("C", tier="standard")
++    assert customers_by_tier("gold") == [a, b]
++
++
++def test_empty_store_returns_empty_list():
++    assert customers_by_tier("standard") == []
++
++
++def test_no_customers_on_known_tier_returns_empty_list():
++    customers.add_customer("Acme", tier="standard")
++    assert customers_by_tier("gold") == []
++
++
++def test_returns_a_new_list_each_call():
++    customers.add_customer("A", tier="gold")
++    first = customers_by_tier("gold")
++    first.clear()
++    assert len(customers_by_tier("gold")) == 1
++
++
++@pytest.mark.parametrize("tier", TIERS)
++def test_every_known_tier_is_accepted(tier):
++    assert customers_by_tier(tier) == []
++
++
++@pytest.mark.parametrize(
++    "tier",
++    ["", " ", "Gold", " gold", "platinum", None, True, False, 0, 1, float("nan"), [], {}],
++)
++def test_unknown_or_invalid_tier_raises(tier):
++    customers.add_customer("A", tier="standard")
++    before = _snapshot()
++    with pytest.raises(ValueError):
++        customers_by_tier(tier)
++    assert _snapshot() == before
++
++
++def test_read_only_does_not_modify_records_or_outbox():
++    customers.add_customer("A", tier="gold")
++    customers.add_customer("B", tier="standard")
++    before = _snapshot()
++    customers_by_tier("gold")
++    customers_by_tier("standard")
++    assert _snapshot() == before
++
++
++def test_read_only_on_empty_store_does_not_modify_state():
++    before = _snapshot()
++    assert customers_by_tier("gold") == []
++    assert _snapshot() == before

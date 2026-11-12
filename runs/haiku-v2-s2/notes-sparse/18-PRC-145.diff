@@ -1,0 +1,91 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:03:27
+@@ -1,9 +1,12 @@
+ import uuid
+ 
++from parcelo import audit
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+-TIERS = ("standard", "gold")
++TIER_STANDARD = "standard"
++TIER_GOLD = "gold"
++TIERS = (TIER_STANDARD, TIER_GOLD)
+ 
+ 
+ def add_customer(name, tier="standard"):
+@@ -18,6 +21,26 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def upgrade_tier(customer_id):
++    if not isinstance(customer_id, str) or isinstance(customer_id, bool):
++        raise ValueError("bad customer id")
++    if not customer_id.strip():
++        raise ValueError("customer id required")
++    if customer_id not in db.customers:
++        raise ValueError("customer not found")
++    customer = db.customers[customer_id]
++    if customer.tier != TIER_STANDARD:
++        raise ValueError("customer is not standard")
++    customer.tier = TIER_GOLD
++    audit.record(
++        "customer.upgraded",
++        customer.id,
++        from_tier=TIER_STANDARD,
++        to_tier=TIER_GOLD,
++    )
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 03:03:31
+@@ -0,0 +1,43 @@
++import pytest
++
++from parcelo import audit, customers, store
++
++
++def test_upgrade_standard_to_gold():
++    c = customers.add_customer("Acme")
++    assert c.tier == customers.TIER_STANDARD
++    audit.LOG.clear()
++
++    result = customers.upgrade_tier(c.id)
++
++    assert result is c
++    assert result.tier == customers.TIER_GOLD
++    assert store.db.customers[c.id].tier == customers.TIER_GOLD
++    assert len(audit.LOG) == 1
++    assert audit.LOG[-1]["action"] == "customer.upgraded"
++    assert audit.LOG[-1]["entity_id"] == c.id
++
++
++def test_upgrade_unknown_customer_fails():
++    audit.LOG.clear()
++    with pytest.raises(ValueError):
++        customers.upgrade_tier("C000000")
++    assert store.db.customers == {}
++    assert audit.LOG == []
++
++
++def test_upgrade_already_gold_fails():
++    c = customers.add_customer("Acme", tier=customers.TIER_GOLD)
++    audit.LOG.clear()
++    with pytest.raises(ValueError):
++        customers.upgrade_tier(c.id)
++    assert store.db.customers[c.id].tier == customers.TIER_GOLD
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("bad", [None, "", "   ", True, 42])
++def test_upgrade_bad_id_fails(bad):
++    audit.LOG.clear()
++    with pytest.raises(ValueError):
++        customers.upgrade_tier(bad)
++    assert audit.LOG == []

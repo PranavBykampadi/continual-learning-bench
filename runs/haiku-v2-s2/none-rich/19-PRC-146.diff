@@ -1,0 +1,68 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:57:18
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import clock
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -28,6 +29,17 @@
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
+     return invoice
++
++
++def write_off(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise ValueError("only open invoices can be written off")
++    invoice.status = "written_off"
++    invoice.written_off_at = clock.now()
++    return invoice.amount
+ 
+ 
+ def open_invoices():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:57:17
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    written_off_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 02:57:21
+@@ -7,3 +7,27 @@
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_write_off_open_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    assert invoices.write_off(inv.id) == 7.0
++    assert inv.status == "written_off"
++    assert inv.written_off_at is not None
++    assert inv not in invoices.open_invoices()
++
++
++def test_write_off_paid_invoice_rejected():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    try:
++        invoices.write_off(inv.id)
++    except ValueError:
++        pass
++    else:
++        raise AssertionError("expected ValueError")
++    assert inv.status == "paid"

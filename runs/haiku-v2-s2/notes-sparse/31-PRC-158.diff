@@ -1,0 +1,177 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:14:38
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- returns: request return for a delivered shipment (PRC-158)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:14:37
+@@ -12,6 +12,11 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## returns
++
++- `returns.request_return(shipment_id, reason)`: file a return request for a delivered shipment (max 3 per shipment; raises `E_NOT_FOUND`, `E_BAD_INPUT`, `E_BAD_STATE`, or `E_LIMIT` as a `DomainError`)
++- `returns.returns_for(shipment_id)`: list the return requests filed for a shipment
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:14:29
+@@ -1,6 +1,8 @@
+ from dataclasses import dataclass, field
+ 
++STATUS_DELIVERED = "delivered"
+ 
++
+ @dataclass
+ class Customer:
+     id: str
+@@ -20,6 +22,14 @@
+     created_at: object = None
+     delivered_at: object = None
+     notes: list = field(default_factory=list)
++
++
++@dataclass
++class ReturnRequest:
++    id: str
++    shipment_id: str
++    reason: str
++    requested_at: object = None
+ 
+ 
+ @dataclass
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/returns.py b/parcelo/returns.py
+--- a/parcelo/returns.py	1969-12-31 19:00:00
++++ b/parcelo/returns.py	2026-11-12 03:14:31
+@@ -0,0 +1,34 @@
++from parcelo import audit, clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import STATUS_DELIVERED, ReturnRequest
++from parcelo.shipments import get_shipment
++from parcelo.store import db
++
++MAX_RETURNS_PER_SHIPMENT = 3
++
++
++def request_return(shipment_id, reason):
++    if not isinstance(shipment_id, str) or not shipment_id.strip():
++        raise DomainError("E_BAD_INPUT", shipment_id)
++    # get_shipment raises E_NOT_FOUND for unknown ids.
++    shipment = get_shipment(shipment_id)
++    if not isinstance(reason, str) or not reason.strip():
++        raise DomainError("E_BAD_INPUT", reason)
++    if shipment.status != STATUS_DELIVERED:
++        raise DomainError("E_BAD_STATE", shipment_id)
++    if len(returns_for(shipment_id)) >= MAX_RETURNS_PER_SHIPMENT:
++        raise DomainError("E_LIMIT", shipment_id)
++    request = ReturnRequest(
++        id=ids.new_id("ret"),
++        shipment_id=shipment_id,
++        reason=reason,
++        requested_at=clock.now(),
++    )
++    db.returns[request.id] = request
++    events.emit("return.requested", request.id, shipment_id=shipment_id)
++    audit.record("return.requested", request.id, shipment_id=shipment_id)
++    return request
++
++
++def returns_for(shipment_id):
++    return [r for r in db.returns.values() if r.shipment_id == shipment_id]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 03:14:26
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.returns = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.returns.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_returns.py b/tests/unit/test_returns.py
+--- a/tests/unit/test_returns.py	1969-12-31 19:00:00
++++ b/tests/unit/test_returns.py	2026-11-12 03:14:36
+@@ -0,0 +1,68 @@
++import pytest
++
++from parcelo import audit, customers, events, returns, shipments
++from parcelo.errors import DomainError
++from parcelo.models import STATUS_DELIVERED
++
++
++def _delivered_shipment():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "local")
++    s.status = STATUS_DELIVERED
++    return s
++
++
++def test_request_return_stores_and_returns_request():
++    s = _delivered_shipment()
++    r = returns.request_return(s.id, "damaged")
++    assert r.id.startswith("ret_")
++    assert r.shipment_id == s.id
++    assert r.reason == "damaged"
++    assert r.requested_at is not None
++    assert returns.returns_for(s.id) == [r]
++
++
++def test_request_return_records_audit_and_event():
++    s = _delivered_shipment()
++    r = returns.request_return(s.id, "damaged")
++    assert audit.LOG[-1]["action"] == "return.requested"
++    assert audit.LOG[-1]["entity_id"] == r.id
++    assert events.OUTBOX[-1]["name"] == "return.requested"
++
++
++def test_unknown_shipment_not_found():
++    with pytest.raises(DomainError) as err:
++        returns.request_return("shp_nope", "damaged")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_blank_shipment_id_is_bad_input():
++    with pytest.raises(DomainError) as err:
++        returns.request_return("   ", "damaged")
++    assert err.value.code == "E_BAD_INPUT"
++
++
++def test_blank_reason_is_bad_input():
++    s = _delivered_shipment()
++    with pytest.raises(DomainError) as err:
++        returns.request_return(s.id, "  ")
++    assert err.value.code == "E_BAD_INPUT"
++    assert returns.returns_for(s.id) == []
++
++
++def test_undelivered_shipment_is_bad_state():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "local")
++    with pytest.raises(DomainError) as err:
++        returns.request_return(s.id, "damaged")
++    assert err.value.code == "E_BAD_STATE"
++
++
++def test_fourth_return_is_rejected():
++    s = _delivered_shipment()
++    for _ in range(returns.MAX_RETURNS_PER_SHIPMENT):
++        returns.request_return(s.id, "damaged")
++    with pytest.raises(DomainError) as err:
++        returns.request_return(s.id, "damage

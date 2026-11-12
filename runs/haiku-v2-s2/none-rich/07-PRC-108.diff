@@ -1,0 +1,66 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:51:47
+@@ -7,6 +7,22 @@
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+ 
++def outstanding_by_customer():
++    """Map each customer id to the total amount of their open invoices.
++
++    Invoices are linked to customers through their shipment. Every known
++    customer appears in the result, with 0.0 if they have nothing open.
++    Paid and void invoices are excluded.
++    """
++    totals = {customer_id: 0.0 for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        customer_id = db.shipments[invoice.shipment_id].customer_id
++        totals[customer_id] = totals.get(customer_id, 0.0) + invoice.amount
++    return {customer_id: round(total, 2) for customer_id, total in totals.items()}
++
++
+ def shipments_by_zone():
+     counts = {}
+     for shipment in db.shipments.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:51:59
+@@ -0,0 +1,36 @@
++from parcelo import customers, reports, shipments
++from parcelo.models import Invoice
++from parcelo.store import db
++
++
++def _add_invoice(shipment_id, amount, status):
++    inv = Invoice(
++        id=f"INV-{len(db.invoices)}",
++        shipment_id=shipment_id,
++        amount=amount,
++        status=status,
++    )
++    db.invoices[inv.id] = inv
++    return inv
++
++
++def test_outstanding_by_customer_counts_only_open_invoices():
++    a = customers.add_customer("Alice")
++    b = customers.add_customer("Bob")
++    s_a = shipments.create_shipment(a.id, 1, "local")
++    s_b = shipments.create_shipment(b.id, 1, "local")
++
++    _add_invoice(s_a.id, 10.5, "open")
++    _add_invoice(s_a.id, 4.25, "open")
++    _add_invoice(s_a.id, 99.0, "paid")
++    _add_invoice(s_a.id, 50.0, "void")
++    _add_invoice(s_b.id, 7.0, "paid")
++
++    result = reports.outstanding_by_customer()
++    assert result[a.id] == 14.75
++    assert result[b.id] == 0.0
++    assert set(result) == {a.id, b.id}
++
++
++def test_outstanding_by_customer_empty():
++    assert reports.outstanding_by_customer() == {}

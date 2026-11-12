@@ -1,0 +1,76 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:35:06
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: add shipments_without_invoice
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:35:06
+@@ -12,6 +12,10 @@
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
+ 
++## reports
++
++- `reports.shipments_without_invoice()`: shipments that no invoice refers to, sorted by id
++
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:35:06
+@@ -22,3 +22,12 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def shipments_without_invoice():
++    """Return shipments that no invoice refers to (any invoice status), sorted by id."""
++    invoiced = {inv.shipment_id for inv in db.invoices.values()}
++    return sorted(
++        (s for s in db.shipments.values() if s.id not in invoiced),
++        key=lambda s: s.id,
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 03:35:06
+@@ -0,0 +1,31 @@
++from parcelo import customers, invoices, reports, shipments
++from parcelo.store import db
++
++
++def test_empty_when_no_shipments():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_lists_only_uninvoiced_shipments_sorted_by_id():
++    c = customers.add_customer("Acme")
++    a = shipments.create_shipment(c.id, 1, "local")
++    b = shipments.create_shipment(c.id, 2, "local")
++    d = shipments.create_shipment(c.id, 3, "local")
++    invoices.issue_invoice(b.id)
++    # break storage order so the result must be sorted explicitly
++    items = list(db.shipments.items())
++    db.shipments.clear()
++    db.shipments.update(reversed(items))
++    result = reports.shipments_without_invoice()
++    assert [s.id for s in result] == sorted([a.id, d.id])
++
++
++def test_invoice_in_any_status_counts():
++    c = customers.add_customer("Acme")
++    s1 = shipments.create_shipment(c.id, 1, "local")
++    s2 = shipments.create_shipment(c.id, 1, "local")
++    inv1 = invoices.issue_invoice(s1.id)
++    inv2 = invoices.issue_invoice(s2.id)
++    invoices.mark_paid(inv1.id)
++    inv2.status = "void"
++    assert reports.shipments_without_invoice() == []

@@ -1,0 +1,138 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:09:06
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: reactivate_customer (PRC-154)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:09:06
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.reactivate_customer(customer_id)`: set a customer's `active` flag back to True
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:09:06
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -13,6 +15,19 @@
+         raise ValueError("name required")
+     customer = Customer(id="C" + uuid.uuid4().hex[:6], name=name, tier=tier)
+     db.customers[customer.id] = customer
++    return customer
++
++
++def reactivate_customer(customer_id):
++    if customer_id is None or not isinstance(customer_id, str) or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", repr(customer_id))
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if customer.active:
++        return customer
++    customer.active = True
++    events.emit("customer.reactivated", customer.id)
+     return customer
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 03:09:11
+@@ -0,0 +1,81 @@
++import datetime
++
++import pytest
++
++from parcelo import audit, clock, customers, events, ids, store
++from parcelo.errors import DomainError
++
++
++@pytest.fixture(autouse=True)
++def clean_state():
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++    yield
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++
++
++def snapshot():
++    return (
++        dict(store.db.customers),
++        dict(store.db.shipments),
++        dict(store.db.invoices),
++        len(audit.LOG),
++        len(events.OUTBOX),
++    )
++
++
++def make_inactive():
++    c = customers.add_customer("Acme")
++    customers.get_customer(c.id).active = False
++    return c.id
++
++
++def test_reactivates_inactive_customer():
++    clock.set_fixed(datetime.datetime(2026, 11, 12, tzinfo=datetime.timezone.utc))
++    cid = make_inactive()
++    result = customers.reactivate_customer(cid)
++    assert result is customers.get_customer(cid)
++    assert result.active is True
++    assert events.OUTBOX[-1]["name"] == "customer.reactivated"
++    assert events.OUTBOX[-1]["entity_id"] == cid
++
++
++def test_already_active_is_noop():
++    c = customers.add_customer("Acme")
++    before = snapshot()
++    result = customers.reactivate_customer(c.id)
++    assert result.active is True
++    assert snapshot() == before
++
++
++def test_repeat_call_is_noop():
++    cid = make_inactive()
++    customers.reactivate_customer(cid)
++    before = snapshot()
++    customers.reactivate_customer(cid)
++    assert snapshot() == before
++
++
++@pytest.mark.parametrize("bad", [None, "", "   ", 42, 1.5, True])
++def test_bad_ids_rejected(bad):
++    before = snapshot()
++    with pytest.raises(DomainError) as err:
++        customers.reactivate_customer(bad)
++    assert err.value.code == "E_BAD_INPUT"
++    assert snapshot() == before
++
++
++@pytest.mark.parametrize("missing", ["nope", "C000000"])
++def test_unknown_customer_fails(missing):
++    before = snapshot()
++    with pytest.raises(DomainError) as err:
++        customers.reactivate_customer(missing)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert snapshot() == before

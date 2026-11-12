@@ -1,0 +1,128 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:01:44
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- shipments: reassign shipment to another customer (PRC-141)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 03:01:43
+@@ -28,3 +28,34 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def reassign_shipment(shipment_id, new_customer_id):
++    """Move a shipment to a different customer.
++
++    Args:
++        shipment_id: Id of the shipment to reassign.
++        new_customer_id: Id of the customer that should own the shipment.
++
++    Returns:
++        The updated Shipment.
++
++    Raises:
++        DomainError: E_NOT_FOUND if the shipment does not exist,
++            E_UNKNOWN_CUSTOMER if the customer does not exist,
++            E_BAD_STATE if the shipment has already been delivered.
++    """
++    shipment = get_shipment(shipment_id)
++    if new_customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", new_customer_id)
++    if shipment.status == "delivered":
++        raise DomainError("E_BAD_STATE", shipment_id)
++    previous_customer_id = shipment.customer_id
++    shipment.customer_id = new_customer_id
++    events.emit(
++        "shipment.reassigned",
++        shipment.id,
++        from_customer_id=previous_customer_id,
++        to_customer_id=new_customer_id,
++    )
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_reassign.py b/tests/unit/test_shipments_reassign.py
+--- a/tests/unit/test_shipments_reassign.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_reassign.py	2026-11-12 03:01:47
+@@ -0,0 +1,75 @@
++import pytest
++
++from parcelo import audit, customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _make_shipment(customer_id):
++    return shipments.create_shipment(customer_id, 1.5, "national")
++
++
++def test_reassign_changes_customer_and_returns_shipment():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    s = _make_shipment(a.id)
++
++    result = shipments.reassign_shipment(s.id, b.id)
++
++    assert result is s
++    assert result.customer_id == b.id
++    assert db.shipments[s.id].customer_id == b.id
++
++
++def test_reassign_emits_event_with_entity_id():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    s = _make_shipment(a.id)
++    before = len(events.OUTBOX)
++
++    shipments.reassign_shipment(s.id, b.id)
++
++    assert len(events.OUTBOX) == before + 1
++    event = events.OUTBOX[-1]
++    assert event["name"] == "shipment.reassigned"
++    assert event["entity_id"] == s.id
++    assert event["payload"] == {"from_customer_id": a.id, "to_customer_id": b.id}
++
++
++def test_reassign_unknown_shipment_fails():
++    b = customers.add_customer("Globex")
++    before_events = len(events.OUTBOX)
++
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment("shp_nope", b.id)
++
++    assert err.value.code == "E_NOT_FOUND"
++    assert len(events.OUTBOX) == before_events
++
++
++def test_reassign_unknown_customer_fails_and_leaves_shipment_unchanged():
++    a = customers.add_customer("Acme")
++    s = _make_shipment(a.id)
++    before_events = len(events.OUTBOX)
++
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, "cust_nope")
++
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.shipments[s.id].customer_id == a.id
++    assert len(events.OUTBOX) == before_events
++
++
++def test_reassign_delivered_shipment_fails_and_leaves_shipment_unchanged():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    s = _make_shipment(a.id)
++    s.status = "delivered"
++    before_events = len(events.OUTBOX)
++
++    with pytest.raises(DomainError) as err:
++        shipments.reassign_shipment(s.id, b.id)
++
++    assert err.value.code == "E_BAD_STATE"
++    assert db.shipments[s.id].customer_id == a.id
++    assert len(events.OUTBOX) == before_events

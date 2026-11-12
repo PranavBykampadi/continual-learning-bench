@@ -1,0 +1,67 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:12:46
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: `quote` plus 0.75 per kg above 30 kg
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 03:12:41
+@@ -1,5 +1,9 @@
++import math
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG = 0.75
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +16,14 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def heavy_quote(weight_kg, zone):
++    if isinstance(weight_kg, bool) or not isinstance(weight_kg, (int, float)):
++        raise ValueError("weight must be a number")
++    if not math.isfinite(weight_kg):
++        raise ValueError("weight must be finite")
++    # quote() validates that the weight is positive and the zone is known.
++    base = quote(weight_kg, zone)
++    excess = max(0, weight_kg - HEAVY_THRESHOLD_KG)
++    return round(base + HEAVY_PER_KG * excess, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 03:12:43
+@@ -10,3 +10,27 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_heavy_quote_at_threshold_is_normal_quote():
++    assert rates.heavy_quote(30, "local") == rates.quote(30, "local")
++
++
++def test_heavy_quote_adds_surcharge_above_30kg():
++    # 4.5 + 1.25 * 32 = 44.5 base, plus 0.75 * 2 = 1.5 surcharge
++    assert rates.heavy_quote(32, "local") == 46.0
++
++
++def test_heavy_quote_light_parcel_is_normal_quote():
++    assert rates.heavy_quote(2, "local") == rates.quote(2, "local")
++
++
++def test_heavy_quote_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.heavy_quote(40, "moon")
++
++
++@pytest.mark.parametrize("weight", [0, -1, True, float("nan"), float("inf"), "10"])
++def test_heavy_quote_rejects_bad_weight(weight):
++    with pytest.raises(ValueError):
++        rates.heavy_quote(weight, "local")

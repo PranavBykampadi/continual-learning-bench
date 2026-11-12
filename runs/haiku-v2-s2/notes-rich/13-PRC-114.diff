@@ -1,0 +1,153 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:58:53
+@@ -1,6 +1,40 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.money import Money
+ from parcelo.store import db
++
++AGING_BUCKETS = ("0-30", "31-60", "60+")
++
++
++def _as_naive_utc(moment):
++    # invoices.issue_invoice stores naive UTC (utcnow) while clock.now() is
++    # aware UTC; subtracting the two raises TypeError, so normalize both.
++    if moment.tzinfo is not None:
++        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
++    return moment
++
++
++def _aging_bucket(age_days):
++    if age_days <= 30:
++        return "0-30"
++    if age_days <= 60:
++        return "31-60"
++    return "60+"
++
++
++def aging_report():
++    """Total open invoice amounts per age bucket, in whole days since issue."""
++    now = _as_naive_utc(clock.now())
++    totals = {key: Money.zero() for key in AGING_BUCKETS}
++    for invoice in db.invoices.values():
++        if invoice.status != "open" or invoice.issued_at is None:
++            continue
++        age = (now - _as_naive_utc(invoice.issued_at)).days
++        # An invoice dated in the future (clock skew) counts as age 0.
++        bucket = _aging_bucket(max(age, 0))
++        totals[bucket] = totals[bucket] + Money.parse(invoice.amount)
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_aging.py b/tests/unit/test_reports_aging.py
+--- a/tests/unit/test_reports_aging.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_aging.py	2026-11-12 02:59:00
+@@ -0,0 +1,104 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import audit, clock, customers, invoices, reports, shipments
++from parcelo.money import Money
++from parcelo.models import Invoice
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 12, 0, 0)
++
++
++def _add_invoice(inv_id, amount, days_old, status="open", extra=None):
++    issued = NOW - timedelta(days=days_old) if extra is None else extra
++    db.invoices[inv_id] = Invoice(
++        id=inv_id,
++        shipment_id="shp_x",
++        amount=amount,
++        status=status,
++        issued_at=issued,
++    )
++
++
++def test_empty_store_has_all_buckets_at_zero():
++    clock.set_fixed(NOW)
++    report = reports.aging_report()
++    assert set(report) == {"0-30", "31-60", "60+"}
++    assert all(v == Money.zero() for v in report.values())
++
++
++def test_bucket_boundaries():
++    clock.set_fixed(NOW)
++    _add_invoice("a0", 1.0, 0)
++    _add_invoice("a30", 10.0, 30)
++    _add_invoice("a31", 100.0, 31)
++    _add_invoice("a60", 1000.0, 60)
++    _add_invoice("a61", 10000.0, 61)
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(11.0)
++    assert report["31-60"] == Money.parse(1100.0)
++    assert report["60+"] == Money.parse(10000.0)
++
++
++def test_partial_days_are_floored_to_whole_days():
++    clock.set_fixed(NOW)
++    # 30 days 23 hours old is still age 30, so it belongs in 0-30.
++    _add_invoice("edge", 5.0, 0, extra=NOW - timedelta(days=30, hours=23))
++    # 60 days 23 hours old is still age 60, so it belongs in 31-60.
++    _add_invoice("edge2", 7.0, 0, extra=NOW - timedelta(days=60, hours=23))
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(5.0)
++    assert report["31-60"] == Money.parse(7.0)
++    assert report["60+"] == Money.zero()
++
++
++def test_paid_invoices_are_excluded():
++    clock.set_fixed(NOW)
++    _add_invoice("paid_old", 50.0, 90, status="paid")
++    _add_invoice("open_old", 20.0, 90)
++    report = reports.aging_report()
++    assert report["60+"] == Money.parse(20.0)
++    assert report["0-30"] == Money.zero()
++    assert report["31-60"] == Money.zero()
++
++
++def test_buckets_sum_multiple_invoices():
++    clock.set_fixed(NOW)
++    _add_invoice("x1", 12.5, 3)
++    _add_invoice("x2", 7.25, 10)
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(19.75)
++
++
++def test_read_only_no_audit_entry():
++    clock.set_fixed(NOW)
++    _add_invoice("r1", 3.0, 5)
++    before = list(audit.LOG)
++    reports.aging_report()
++    assert audit.LOG == before
++
++
++def test_naive_issue_time_with_aware_clock():
++    # issue_invoice stores naive UTC; clock.now() is aware UTC. Must not raise.
++    clock.set_fixed(datetime(2026, 11, 12, 12, 0, 0, tzinfo=timezone.utc))
++    _add_invoice("naive", 9.0, 45)
++    report = reports.aging_report()
++    assert report["31-60"] == Money.parse(9.0)
++
++
++def test_aware_issue_time_with_naive_clock():
++    clock.set_fixed(NOW)
++    _add_invoice("aware", 4.0, 0, extra=datetime(2026, 11, 1, tzinfo=timezone.utc))
++    report = reports.aging_report()
++    assert report["0-30"] == Money.parse(4.0)
++
++
++def test_issued_via_invoices_module_is_aged():
++    clock.set_fixed(datetime(2026, 11, 12, 12, 0, 0, tzinfo=timezone.utc))
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    # Backdate the issue time by 75 days (stored naive, as issue_invoice does).
++    inv.issued_at = datetime(2026, 11, 12, 12, 0, 0) - timedelta(days=75)
++    report = reports.aging_report()
++    assert report["60+"] == Money.parse(inv.amount)
++    assert report["0-30"] == Money.zero()

@@ -1,0 +1,154 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 03:02:15
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- invoices: add apply_credit to reduce an open invoice's amount (PRC-113)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:02:13
+@@ -1,7 +1,11 @@
+ import uuid
+ from datetime import datetime
++from decimal import Decimal, InvalidOperation
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+@@ -32,3 +36,39 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++CREDITABLE_STATUSES = ("open",)
++
++
++def _parse_credit(amount):
++    if amount is None or isinstance(amount, bool):
++        raise DomainError("E_BAD_INPUT", f"invalid credit amount {amount!r}")
++    try:
++        credit = Money.parse(amount)
++    except (InvalidOperation, ValueError, TypeError):
++        raise DomainError("E_BAD_INPUT", f"invalid credit amount {amount!r}")
++    if credit.cents <= 0:
++        raise DomainError("E_BAD_INPUT", "credit amount must be positive")
++    return credit
++
++
++def apply_credit(invoice_id, amount):
++    """Reduce an open invoice's amount by a credit and return the remaining Money.
++
++    Invoice.amount stays a plain dollar number (float) because revenue_total and
++    customers.outstanding_balance sum it with floats; the arithmetic is done in Money.
++    """
++    invoice = db.invoices.get(invoice_id)
++    if invoice is None:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    if invoice.status not in CREDITABLE_STATUSES:
++        raise DomainError("E_BAD_STATE", f"{invoice_id} is {invoice.status}")
++    credit = _parse_credit(amount)
++    current = Money.parse(invoice.amount)
++    if current < credit:
++        raise DomainError("E_LIMIT", f"credit {credit} exceeds invoice amount {current}")
++    remaining = current - credit
++    invoice.amount = float(Decimal(remaining.cents) / 100)
++    audit.record("invoice.credit_applied", invoice_id, credit=credit, remaining=remaining)
++    return remaining
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_credit.py b/tests/unit/test_invoices_credit.py
+--- a/tests/unit/test_invoices_credit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_credit.py	2026-11-12 03:02:23
+@@ -0,0 +1,84 @@
++import pytest
++
++from parcelo import audit, customers, invoices, reports, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++@pytest.fixture
++def setup():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)  # amount 7.0
++    audit.LOG.clear()
++    return c, inv
++
++
++def test_apply_credit_returns_remaining_money(setup):
++    _, inv = setup
++    remaining = invoices.apply_credit(inv.id, "2.50")
++    assert remaining == Money.parse("4.50")
++    assert isinstance(remaining, Money)
++    assert inv.amount == 4.5
++    assert inv.status == "open"
++    assert audit.LOG[-1]["action"] == "invoice.credit_applied"
++    assert audit.LOG[-1]["entity_id"] == inv.id
++
++
++def test_multiple_credits_avoid_float_drift(setup):
++    _, inv = setup
++    inv.amount = 0.3
++    assert invoices.apply_credit(inv.id, 0.1) == Money.parse("0.20")
++    assert invoices.apply_credit(inv.id, 0.2) == Money.zero()
++    assert inv.amount == 0.0
++
++
++def test_full_credit_allowed(setup):
++    _, inv = setup
++    assert invoices.apply_credit(inv.id, Money.parse("7.00")) == Money.zero()
++
++
++def test_credited_amount_works_with_balance_and_reports(setup):
++    c, inv = setup
++    invoices.apply_credit(inv.id, "1.25")
++    assert customers.outstanding_balance(c.id) == 5.75
++    invoices.mark_paid(inv.id)
++    assert reports.revenue_total() == 5.75
++    assert reports.daily_summary()["revenue"] == 5.75
++
++
++def test_missing_invoice(setup):
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit("INV-nope", "1.00")
++    assert err.value.code == "E_NOT_FOUND"
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("status", ["paid", "void"])
++def test_not_open(setup, status):
++    _, inv = setup
++    inv.status = status
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, "1.00")
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.amount == 7.0
++    assert audit.LOG == []
++
++
++def test_credit_larger_than_amount(setup):
++    _, inv = setup
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, "7.01")
++    assert err.value.code == "E_LIMIT"
++    assert inv.amount == 7.0
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("bad", [0, "0", -1, "-0.01", "0.001", "abc", None, True])
++def test_bad_amount(setup, bad):
++    _, inv = setup
++    with pytest.raises(DomainError) as err:
++        invoices.apply_credit(inv.id, bad)
++    assert err.value.code == "E_BAD_INPUT"
++    assert inv.amount == 7.0
++    assert audit.LOG == []

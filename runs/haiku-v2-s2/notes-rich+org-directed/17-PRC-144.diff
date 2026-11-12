@@ -1,0 +1,139 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:04:43
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- rates: add insurance fee for declared value (PRC-144)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:04:45
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.insurance_fee(declared_value, zone)`: insurance fee as `Money` (2% plus zone fuel surcharge, minimum 1.00)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 03:04:39
+@@ -1,7 +1,18 @@
++from decimal import Decimal
++
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
++# Fuel surcharge percentage per zone. Finance owns these numbers; they must
++# match parcelo/legacy/billing.py fuel_surcharge until the legacy module is removed.
++FUEL_SURCHARGE_PCT = {"local": 0.0, "national": 4.0, "international": 9.5}
++INSURANCE_PCT = 2.0
++INSURANCE_MIN = Money(100)
+ 
++
+ def base_rate(zone):
+     if zone not in ZONE_BASE:
+         raise ValueError("unknown zone: %s" % zone)
+@@ -12,3 +23,33 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value, zone: str) -> Money:
++    """Return the insurance fee for a shipment with a declared value.
++
++    The fee is 2% of the declared value plus the zone's fuel surcharge
++    percentage of the declared value, rounded to the cent once, with a
++    minimum of 1.00.
++
++    Args:
++        declared_value: Declared value as Money, float, int, str or Decimal.
++        zone: One of the keys of FUEL_SURCHARGE_PCT.
++
++    Returns:
++        The insurance fee as Money.
++
++    Raises:
++        DomainError: E_BAD_ZONE if the zone is unknown, E_BAD_INPUT if the
++            declared value is zero or negative.
++    """
++    if zone not in FUEL_SURCHARGE_PCT:
++        raise DomainError("E_BAD_ZONE", zone)
++    value = Money.parse(declared_value)
++    if value.cents <= 0:
++        raise DomainError("E_BAD_INPUT", "declared value must be positive")
++    rate_pct = Decimal(str(INSURANCE_PCT)) + Decimal(str(FUEL_SURCHARGE_PCT[zone]))
++    fee = value.scale(rate_pct / Decimal(100))
++    if fee < INSURANCE_MIN:
++        return INSURANCE_MIN
++    return fee
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rates_insurance.py b/tests/unit/test_rates_insurance.py
+--- a/tests/unit/test_rates_insurance.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rates_insurance.py	2026-11-12 03:04:41
+@@ -0,0 +1,60 @@
++import pytest
++
++from parcelo import audit, events
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.rates import insurance_fee
++
++
++def test_local_zone_is_two_percent():
++    assert insurance_fee(100, "local") == Money(200)
++
++
++def test_national_zone_adds_fuel_surcharge():
++    assert insurance_fee(100, "national") == Money(600)
++
++
++def test_international_zone_uses_fractional_surcharge():
++    assert insurance_fee(250, "international") == Money(2875)
++
++
++def test_minimum_fee_applies():
++    assert insurance_fee(10, "local") == Money(100)
++    assert insurance_fee("0.01", "international") == Money(100)
++
++
++def test_accepts_string_and_money_inputs():
++    assert insurance_fee("100.00", "national") == Money(600)
++    assert insurance_fee(Money(10000), "national") == Money(600)
++
++
++def test_unknown_zone_fails():
++    with pytest.raises(DomainError) as err:
++        insurance_fee(100, "moon")
++    assert err.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("value", [0, -5, "-0.01"])
++def test_non_positive_declared_value_fails(value):
++    with pytest.raises(DomainError) as err:
++        insurance_fee(value, "local")
++    assert err.value.code == "E_BAD_INPUT"
++
++
++def test_quote_records_no_audit_and_no_events():
++    audit_before = len(audit.LOG)
++    events_before = len(events.OUTBOX)
++    insurance_fee(100, "national")
++    assert len(audit.LOG) == audit_before
++    assert len(events.OUTBOX) == events_before
++
++
++def test_failed_quote_records_no_audit_and_no_events():
++    audit_before = len(audit.LOG)
++    events_before = len(events.OUTBOX)
++    with pytest.raises(DomainError):
++        insurance_fee(0, "local")
++    with pytest.raises(DomainError):
++        insurance_fee(100, "moon")
++    assert len(audit.LOG) == audit_before
++    assert len(events.OUTBOX) == events_before

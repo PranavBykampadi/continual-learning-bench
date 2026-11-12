@@ -1,0 +1,77 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:51:36
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add deactivate_customer (PRC-104)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:51:36
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import audit
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -27,3 +29,14 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def deactivate_customer(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    if not customer.active:
++        raise DomainError("E_BAD_STATE", f"{customer_id} is inactive")
++    customer.active = False
++    audit.record("customer.deactivated", customer_id)
++    return customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_deactivate.py b/tests/unit/test_customers_deactivate.py
+--- a/tests/unit/test_customers_deactivate.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_deactivate.py	2026-11-12 02:51:36
+@@ -0,0 +1,36 @@
++import pytest
++
++from parcelo import audit, customers
++from parcelo.errors import DomainError
++
++
++def test_deactivate_customer_sets_inactive_and_returns_it():
++    c = customers.add_customer("Acme")
++
++    result = customers.deactivate_customer(c.id)
++
++    assert result is c
++    assert c.active is False
++    assert customers.get_customer(c.id).active is False
++    assert audit.LOG[-1]["action"] == "customer.deactivated"
++    assert audit.LOG[-1]["entity_id"] == c.id
++
++
++def test_deactivate_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.deactivate_customer("C-missing")
++    assert err.value.code == "E_NOT_FOUND"
++    assert audit.LOG == []
++
++
++def test_deactivate_already_inactive_customer_fails():
++    c = customers.add_customer("Acme")
++    customers.deactivate_customer(c.id)
++    log_len = len(audit.LOG)
++
++    with pytest.raises(DomainError) as err:
++        customers.deactivate_customer(c.id)
++
++    assert err.value.code == "E_BAD_STATE"
++    assert c.active is False
++    assert len(audit.LOG) == log_len

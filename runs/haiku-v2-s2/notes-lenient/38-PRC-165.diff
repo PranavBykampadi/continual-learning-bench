@@ -1,0 +1,110 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:17:18
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: add shipments_without_invoice
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:17:17
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments no invoice refers to, sorted by id; read-only
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:17:12
+@@ -14,6 +14,12 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    invoiced = {i.shipment_id for i in db.invoices.values()}
++    missing = [s for s in db.shipments.values() if s.id not in invoiced]
++    return sorted(missing, key=lambda s: s.id)
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 03:17:15
+@@ -0,0 +1,68 @@
++from parcelo import customers, invoices, reports, shipments
++from parcelo.store import db
++
++
++def _ship(customer_id, weight, zone="local"):
++    return shipments.create_shipment(customer_id, weight, zone)
++
++
++def test_returns_only_shipments_without_invoice():
++    c = customers.add_customer("Acme")
++    invoiced = _ship(c.id, 2)
++    bare = _ship(c.id, 3)
++    invoices.issue_invoice(invoiced.id)
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == [bare.id]
++
++
++def test_all_shipments_when_none_invoiced():
++    c = customers.add_customer("Acme")
++    a = _ship(c.id, 1)
++    b = _ship(c.id, 2)
++
++    assert sorted(s.id for s in reports.shipments_without_invoice()) == sorted([a.id, b.id])
++
++
++def test_empty_when_all_invoiced():
++    c = customers.add_customer("Acme")
++    s = _ship(c.id, 2)
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []
++
++
++def test_empty_when_no_shipments():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_sorted_by_id_regardless_of_storage_order():
++    c = customers.add_customer("Acme")
++    first = _ship(c.id, 1)
++    second = _ship(c.id, 2)
++    third = _ship(c.id, 3)
++
++    # Reverse insertion order so storage order differs from id order.
++    items = list(db.shipments.items())
++    db.shipments.clear()
++    for key, value in reversed(items):
++        db.shipments[key] = value
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == sorted([first.id, second.id, third.id])
++
++
++def test_read_only_does_not_change_state():
++    from parcelo import audit, events
++
++    c = customers.add_customer("Acme")
++    _ship(c.id, 1)
++    outbox_before = len(events.OUTBOX)
++    audit_before = len(audit.LOG)
++
++    reports.shipments_without_invoice()
++
++    assert len(events.OUTBOX) == outbox_before
++    assert len(audit.LOG) == audit_before

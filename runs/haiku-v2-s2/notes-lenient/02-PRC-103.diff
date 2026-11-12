@@ -1,0 +1,89 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:49:40
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- rates: quote with fuel surcharge (PRC-103)
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:49:38
+@@ -1,3 +1,6 @@
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import fuel_surcharge
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +15,22 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    """Return the base quote plus the zone's fuel surcharge.
++
++    Raises DomainError: E_BAD_ZONE for an unknown zone, E_BAD_WEIGHT for a
++    weight that is zero or negative.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", str(weight_kg))
++    base = quote(weight_kg, zone)
++    surcharge = fuel_surcharge(base, zone)
++    return {
++        "base": base,
++        "surcharge": surcharge,
++        "total": round(base + surcharge, 2),
++    }
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rates_surcharge.py b/tests/unit/test_rates_surcharge.py
+--- a/tests/unit/test_rates_surcharge.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rates_surcharge.py	2026-11-12 02:49:49
+@@ -0,0 +1,41 @@
++import pytest
++
++from parcelo import rates
++from parcelo.errors import DomainError
++
++
++def test_quote_with_surcharge_local_has_no_surcharge():
++    result = rates.quote_with_surcharge(2, "local")
++    assert result["base"] == 7.0
++    assert result["surcharge"] == 0.0
++    assert result["total"] == 7.0
++
++
++def test_quote_with_surcharge_national():
++    # base = 9.0 + 1.25 * 2 = 11.5; surcharge 4% = 0.46
++    result = rates.quote_with_surcharge(2, "national")
++    assert result["base"] == 11.5
++    assert result["surcharge"] == 0.46
++    assert result["total"] == 11.96
++
++
++def test_quote_with_surcharge_international():
++    # base = 24.0 + 1.25 * 4 = 29.0; surcharge 9.5% = 2.755, which the
++    # legacy fuel_surcharge rounds to 2.75 (float representation)
++    result = rates.quote_with_surcharge(4, "international")
++    assert result["base"] == 29.0
++    assert result["surcharge"] == 2.75
++    assert result["total"] == 31.75
++
++
++def test_quote_with_surcharge_unknown_zone():
++    with pytest.raises(DomainError) as err:
++        rates.quote_with_surcharge(2, "moon")
++    assert err.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("weight", [0, -1, -0.5])
++def test_quote_with_surcharge_non_positive_weight(weight):
++    with pytest.raises(DomainError) as err:
++        rates.quote_with_surcharge(weight, "national")
++    assert err.value.code == "E_BAD_WEIGHT"

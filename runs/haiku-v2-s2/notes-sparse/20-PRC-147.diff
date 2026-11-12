@@ -1,0 +1,80 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:05:09
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:05:07
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,17 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def volume_report():
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 03:05:08
+@@ -0,0 +1,37 @@
++from parcelo import customers, reports, shipments
++
++
++def test_volume_report_includes_customers_without_shipments():
++    c = customers.add_customer("Acme")
++    assert reports.volume_report() == {
++        c.id: {"shipments": 0, "tier": "starter"},
++    }
++
++
++def test_volume_report_counts_shipments_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Bolt")
++    for _ in range(3):
++        shipments.create_shipment(a.id, 2, "local")
++    shipments.create_shipment(b.id, 5, "national")
++
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++def test_volume_report_tier_thresholds():
++    regular = customers.add_customer("Regular")
++    bulk = customers.add_customer("Bulk")
++    for _ in range(10):
++        shipments.create_shipment(regular.id, 1, "local")
++    for _ in range(50):
++        shipments.create_shipment(bulk.id, 1, "local")
++
++    report = reports.volume_report()
++    assert report[regular.id] == {"shipments": 10, "tier": "regular"}
++    assert report[bulk.id] == {"shipments": 50, "tier": "bulk"}
++
++
++def test_volume_report_empty_store():
++    assert reports.volume_report() == {}

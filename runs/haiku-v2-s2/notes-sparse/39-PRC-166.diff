@@ -1,0 +1,126 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:20:31
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- invoices: escalate large unpaid invoices (PRC-166)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:20:21
+@@ -1,11 +1,15 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
++ESCALATION_MIN = Money.parse("500.00")
+ 
++
+ def issue_invoice(shipment_id):
+     shipment = db.shipments[shipment_id]
+     invoice = Invoice(
+@@ -32,3 +36,15 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def escalate_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise DomainError("E_BAD_STATE", "invoice is " + invoice.status)
++    if Money.parse(invoice.amount) < ESCALATION_MIN:
++        raise DomainError("E_BAD_STATE", "amount below 500.00")
++    invoice.status = "escalated"
++    return invoice
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 03:20:27
+@@ -1,4 +1,7 @@
++import pytest
++
+ from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
+ 
+ 
+ def test_issue_and_pay():
+@@ -7,3 +10,68 @@
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def _issue(customer_id, weight_kg, zone):
++    s = shipments.create_shipment(customer_id, weight_kg, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_escalate_open_large_invoice():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 400, "international")  # 524.00
++    out = invoices.escalate_invoice(inv.id)
++    assert out is inv
++    assert out.status == "escalated"
++
++
++def test_escalate_threshold_is_inclusive():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 380.8, "international")  # exactly 500.00
++    assert inv.amount == 500.0
++    assert invoices.escalate_invoice(inv.id).status == "escalated"
++
++
++def test_escalate_missing_invoice_empty_store():
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_escalate_small_invoice_rejected():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 2, "local")  # 7.00
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == "open"
++
++
++def test_escalate_paid_invoice_rejected():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 400, "international")
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++
++
++def test_escalate_twice_rejected():
++    c = customers.add_customer("Acme")
++    inv = _issue(c.id, 400, "international")
++    invoices.escalate_invoice(inv.id)
++    with pytest.raises(DomainError) as err:
++        invoices.escalate_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++
++
++def test_escalate_mixed_store_touches_only_target():
++    c = customers.add_customer("Acme")
++    big = _issue(c.id, 400, "international")
++    small = _issue(c.id, 2, "local")
++    edge = _issue(c.id, 380.8, "international")
++    invoices.escalate_invoice(big.id)
++    assert big.status == "escalated"
++    assert small.status == "open"
++    assert edge.status == "open"

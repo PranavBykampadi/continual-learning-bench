@@ -1,0 +1,25 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:01:26
+@@ -27,3 +27,21 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def open_invoice_count(customer_id):
++    count = 0
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            count += 1
++    return count
++
++
++def needs_review(customer_id):
++    """True if the customer has more than 3 open invoices or open invoices totalling over 250.00.
++
++    Raises KeyError if the customer does not exist.
++    """
++    get_customer(customer_id)  # fail loudly for unknown customers
++    return open_invoice_count(customer_id) > 3 or outstanding_balance(customer_id) > 250.00

@@ -1,0 +1,119 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:16:32
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-161] customers: add volume rebate for a customer
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:16:32
+@@ -1,11 +1,16 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
++from parcelo.legacy.billing import volume_tier
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+ 
++# Rebate percentage per volume tier, as returned by legacy volume_tier().
++REBATE_PCT = {"starter": 0.0, "regular": 3.0, "bulk": 6.0}
+ 
++
+ def add_customer(name, tier="standard"):
+     if tier not in TIERS:
+         raise ValueError("bad tier")
+@@ -27,3 +32,33 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def rebate_for(customer_id):
++    """Volume rebate earned by a customer: a share of their paid invoices.
++
++    Starter customers (fewer than 10 shipments) earn nothing, regular
++    (10+) earn 3%, and bulk (50+) earn 6%.
++    """
++    if not isinstance(customer_id, str) or isinstance(customer_id, bool):
++        raise DomainError("E_BAD_INPUT", customer_id)
++    if not customer_id or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", customer_id)
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++
++    shipment_count = 0
++    for shipment in db.shipments.values():
++        if shipment.customer_id == customer_id:
++            shipment_count += 1
++
++    paid_total = 0.0
++    for invoice in db.invoices.values():
++        if invoice.status != "paid":
++            continue
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id:
++            paid_total += invoice.amount
++
++    pct = REBATE_PCT[volume_tier(shipment_count)]
++    return round(paid_total * pct / 100.0, 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_customers.py b/tests/test_customers.py
+--- a/tests/test_customers.py	1969-12-31 19:00:00
++++ b/tests/test_customers.py	2026-11-12 03:16:51
+@@ -0,0 +1,50 @@
++import pytest
++
++from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _customer_with_shipments(n, pay=False):
++    c = customers.add_customer("Acme")
++    for _ in range(n):
++        # 2kg local shipment invoices at 4.5 + 1.25 * 2 = 7.00 exactly
++        s = shipments.create_shipment(c.id, 2, "local")
++        inv = invoices.issue_invoice(s.id)
++        if pay:
++            invoices.mark_paid(inv.id)
++    return c
++
++
++def test_no_rebate_below_ten_shipments():
++    c = _customer_with_shipments(9, pay=True)
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_regular_tier_at_ten_shipments():
++    c = _customer_with_shipments(10, pay=True)
++    # 10 paid invoices of 7.00 = 70.00; 3% = 2.10
++    assert customers.rebate_for(c.id) == 2.10
++
++
++def test_bulk_tier_at_fifty_shipments():
++    c = _customer_with_shipments(50, pay=True)
++    # 50 paid invoices of 7.00 = 350.00; 6% = 21.00
++    assert customers.rebate_for(c.id) == 21.00
++
++
++def test_only_paid_invoices_count():
++    c = _customer_with_shipments(10, pay=False)
++    assert customers.rebate_for(c.id) == 0.0
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for("nope")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize("bad", [None, 3, True, "", "   "])
++def test_bad_customer_id_rejected(bad):
++    with pytest.raises(DomainError) as err:
++        customers.rebate_for(bad)
++    assert err.value.code == "E_BAD_INPUT"

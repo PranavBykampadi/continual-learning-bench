@@ -1,0 +1,116 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:50:53
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- invoices: add late fee for an invoice (PRC-106)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:50:53
+@@ -1,11 +1,18 @@
+ import uuid
+-from datetime import datetime
++from datetime import datetime, timezone
++from decimal import Decimal
+ 
++from parcelo import clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
++from parcelo.money import Money
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
++LATE_AFTER_DAYS = 30
++LATE_FEE_PER_DAY = Decimal("0.015")
+ 
++
+ def issue_invoice(shipment_id):
+     shipment = db.shipments[shipment_id]
+     invoice = Invoice(
+@@ -32,3 +39,26 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++def _as_utc(moment):
++    # issue_invoice stores naive UTC datetimes; clock.now() is timezone-aware.
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment.astimezone(timezone.utc)
++
++
++def late_fee_for(invoice_id):
++    """Late fee picked up by an invoice as of now.
++
++    The invoice is late LATE_AFTER_DAYS days after it was issued; each full day
++    past that adds 1.5% of the invoice amount. Not late means a zero fee.
++    """
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    invoice = db.invoices[invoice_id]
++    elapsed = clock.now() - _as_utc(invoice.issued_at)
++    days_late = elapsed.days - LATE_AFTER_DAYS
++    if days_late <= 0:
++        return Money.zero()
++    return Money.parse(invoice.amount).scale(LATE_FEE_PER_DAY * days_late)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_late_fee.py b/tests/unit/test_invoices_late_fee.py
+--- a/tests/unit/test_invoices_late_fee.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_late_fee.py	2026-11-12 02:50:58
+@@ -0,0 +1,51 @@
++from datetime import timedelta, timezone
++
++import pytest
++
++from parcelo import clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++def _issued_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")  # quote is 7.00
++    return invoices.issue_invoice(s.id)
++
++
++def _set_now(invoice, days_after_issue):
++    issued = invoice.issued_at.replace(tzinfo=timezone.utc)
++    clock.set_fixed(issued + timedelta(days=days_after_issue))
++
++
++def test_not_late_has_no_fee():
++    inv = _issued_invoice()
++    _set_now(inv, 29)
++    assert invoices.late_fee_for(inv.id) == Money.zero()
++
++
++def test_exactly_thirty_days_is_not_late_yet():
++    inv = _issued_invoice()
++    _set_now(inv, 30)
++    assert invoices.late_fee_for(inv.id) == Money.zero()
++
++
++def test_fee_is_one_and_a_half_percent_per_day_past_thirty():
++    inv = _issued_invoice()
++    _set_now(inv, 40)  # 10 days late: 7.00 * 1.5% * 10 = 1.05
++    fee = invoices.late_fee_for(inv.id)
++    assert isinstance(fee, Money)
++    assert fee.cents == 105
++
++
++def test_fee_uses_money_for_float_amounts():
++    inv = _issued_invoice()
++    inv.amount = 100.0
++    _set_now(inv, 31)  # 1 day late: 100.00 * 1.5% = 1.50
++    assert invoices.late_fee_for(inv.id).cents == 150
++
++
++def test_unknown_invoice_raises_not_found():
++    with pytest.raises(DomainError) as err:
++        invoices.late_fee_for("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"

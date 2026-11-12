@@ -1,0 +1,109 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:10:32
+@@ -1,9 +1,12 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
++REVIEW_MAX_OPEN_INVOICES = 3
++REVIEW_MAX_OUTSTANDING = 250.00
+ 
+ 
+ def add_customer(name, tier="standard"):
+@@ -27,3 +30,25 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def needs_review(customer_id):
++    if isinstance(customer_id, bool) or not isinstance(customer_id, str):
++        raise DomainError("E_BAD_INPUT", "customer_id")
++    if not customer_id or not customer_id.strip():
++        raise DomainError("E_BAD_INPUT", "customer_id")
++    try:
++        get_customer(customer_id)
++    except KeyError:
++        raise DomainError("E_NOT_FOUND", customer_id)
++
++    open_count = 0
++    for invoice in db.invoices.values():
++        shipment = db.shipments[invoice.shipment_id]
++        if shipment.customer_id == customer_id and invoice.status == "open":
++            open_count += 1
++
++    return (
++        open_count > REVIEW_MAX_OPEN_INVOICES
++        or outstanding_balance(customer_id) > REVIEW_MAX_OUTSTANDING
++    )
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 03:10:36
+@@ -0,0 +1,63 @@
++import pytest
++
++from parcelo import customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _open_invoice(customer_id, amount):
++    s = shipments.create_shipment(customer_id, 1, "local")
++    inv = invoices.issue_invoice(s.id)
++    inv.amount = amount
++    return inv
++
++
++def test_no_open_invoices_is_not_flagged():
++    c = customers.add_customer("Acme")
++    assert customers.needs_review(c.id) is False
++
++
++def test_four_open_invoices_is_flagged():
++    c = customers.add_customer("Acme")
++    for _ in range(4):
++        _open_invoice(c.id, 1.0)
++    assert customers.needs_review(c.id) is True
++
++
++def test_three_open_invoices_small_total_is_not_flagged():
++    c = customers.add_customer("Acme")
++    for _ in range(3):
++        _open_invoice(c.id, 10.0)
++    assert customers.needs_review(c.id) is False
++
++
++def test_outstanding_over_limit_is_flagged():
++    c = customers.add_customer("Acme")
++    _open_invoice(c.id, 250.01)
++    assert customers.needs_review(c.id) is True
++
++
++def test_outstanding_exactly_at_limit_is_not_flagged():
++    c = customers.add_customer("Acme")
++    _open_invoice(c.id, 250.00)
++    assert customers.needs_review(c.id) is False
++
++
++def test_paid_invoices_do_not_count():
++    c = customers.add_customer("Acme")
++    for _ in range(4):
++        inv = _open_invoice(c.id, 1.0)
++        invoices.mark_paid(inv.id)
++    assert customers.needs_review(c.id) is False
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        customers.needs_review("C-missing")
++    assert exc.value.code == "E_NOT_FOUND"
++
++
++@pytest.mark.parametrize("bad", [None, 5, True, "", "   "])
++def test_bad_customer_id_fails(bad):
++    with pytest.raises(DomainError) as exc:
++        customers.needs_review(bad)
++    assert exc.value.code == "E_BAD_INPUT"

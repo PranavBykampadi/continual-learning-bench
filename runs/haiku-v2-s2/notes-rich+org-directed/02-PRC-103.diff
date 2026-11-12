@@ -1,0 +1,95 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:50:35
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- rates: quote with fuel surcharge (PRC-103)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:50:34
+@@ -1,5 +1,9 @@
++from parcelo.errors import DomainError
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++# Finance owns these numbers. Same values as fuel_surcharge in parcelo/legacy/billing.py.
++FUEL_SURCHARGE_PCT = {"local": 0.0, "national": 4.0, "international": 9.5}
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +16,30 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def quote_with_surcharge(weight_kg, zone):
++    """Quote a shipment and add the fuel surcharge for its zone.
++
++    The surcharge is computed on the unrounded quote and rounded once at the
++    end, so the amounts are only rounded to cents here.
++
++    Args:
++        weight_kg: Shipment weight in kilograms. Must be greater than zero.
++        zone: One of the keys in ZONE_BASE ("local", "national", "international").
++
++    Returns:
++        A tuple (quote, fuel_surcharge), both in dollars rounded to cents.
++        quote matches quote(weight_kg, zone).
++
++    Raises:
++        DomainError: E_BAD_ZONE if the zone is unknown, or E_BAD_WEIGHT if
++            weight_kg is zero or negative.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", str(weight_kg))
++    raw = ZONE_BASE[zone] + PER_KG * weight_kg
++    surcharge = round(raw * FUEL_SURCHARGE_PCT[zone] / 100.0, 2)
++    return round(raw, 2), surcharge
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rates_surcharge.py b/tests/unit/test_rates_surcharge.py
+--- a/tests/unit/test_rates_surcharge.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rates_surcharge.py	2026-11-12 02:50:42
+@@ -0,0 +1,36 @@
++import pytest
++
++from parcelo import rates
++from parcelo.errors import DomainError
++
++
++def test_local_has_no_surcharge():
++    assert rates.quote_with_surcharge(2, "local") == (7.0, 0.0)
++
++
++def test_national_surcharge_is_four_percent():
++    # quote 9.0 + 1.25 * 2 = 11.5, surcharge 4% of 11.5 = 0.46
++    assert rates.quote_with_surcharge(2, "national") == (11.5, 0.46)
++
++
++def test_international_surcharge_is_nine_point_five_percent():
++    # quote 24.0 + 1.25 * 1 = 25.25, surcharge 9.5% of 25.25 = 2.39875 -> 2.40
++    assert rates.quote_with_surcharge(1, "international") == (25.25, 2.4)
++
++
++def test_quote_matches_plain_quote():
++    base, _ = rates.quote_with_surcharge(3.7, "national")
++    assert base == rates.quote(3.7, "national")
++
++
++def test_unknown_zone():
++    with pytest.raises(DomainError) as err:
++        rates.quote_with_surcharge(2, "moon")
++    assert err.value.code == "E_BAD_ZONE"
++
++
++@pytest.mark.parametrize("weight", [0, -1, -0.5])
++def test_non_positive_weight(weight):
++    with pytest.raises(DomainError) as err:
++        rates.quote_with_surcharge(weight, "local")
++    assert err.value.code == "E_BAD_WEIGHT"

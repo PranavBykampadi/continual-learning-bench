@@ -1,0 +1,117 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:14:39
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- reports: add per-customer volume report (PRC-147)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:14:43
+@@ -14,6 +14,31 @@
+     return counts
+ 
+ 
++def _volume_label(shipment_count):
++    # Same thresholds as the old billing volume_tier helper; reimplemented here
++    # because new code must not import from the legacy package.
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Per-customer shipment count and volume tier, for every customer.
++
++    Customers with no shipments are included with a count of 0.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_label(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 03:14:46
+@@ -0,0 +1,67 @@
++import pytest
++
++from parcelo import customers, events, reports, shipments
++from parcelo.store import db
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_customer_with_no_shipments_is_included_as_starter():
++    c = customers.add_customer("Empty")
++    report = reports.volume_report()
++    assert report == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_every_customer_is_a_key_and_counts_only_their_shipments():
++    a = customers.add_customer("A")
++    b = customers.add_customer("B")
++    _ship(a.id, 3)
++    _ship(b.id, 1)
++    report = reports.volume_report()
++    assert set(report) == {a.id, b.id}
++    assert report[a.id]["shipments"] == 3
++    assert report[b.id]["shipments"] == 1
++
++
++def test_empty_store_gives_empty_report():
++    assert reports.volume_report() == {}
++
++
++@pytest.mark.parametrize(
++    "count, label",
++    [
++        (0, "starter"),
++        (1, "starter"),
++        (9, "starter"),   # last value below regular
++        (10, "regular"),  # threshold
++        (11, "regular"),  # first value above
++        (49, "regular"),  # last value below bulk
++        (50, "bulk"),     # threshold
++        (51, "bulk"),     # further out
++    ],
++)
++def test_tier_label_thresholds(count, label):
++    c = customers.add_customer("Thresholds")
++    _ship(c.id, count)
++    assert reports.volume_report()[c.id] == {"shipments": count, "tier": label}
++
++
++def test_shipments_for_unknown_customer_are_not_reported():
++    c = customers.add_customer("Known")
++    # Bypass create_shipment's customer check to plant an orphan shipment.
++    shipments.create_shipment(c.id, 1.0, "local")
++    orphan = list(db.shipments.values())[0]
++    orphan.customer_id = "C_GONE"
++    report = reports.volume_report()
++    assert report == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_report_does_not_emit_events():
++    c = customers.add_customer("Quiet")
++    _ship(c.id, 2)
++    events.OUTBOX.clear()
++    reports.volume_report()
++    assert events.OUTBOX == []

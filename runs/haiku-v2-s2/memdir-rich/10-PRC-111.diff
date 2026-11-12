@@ -1,0 +1,89 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 03:00:37
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- shipments: add timestamped notes with add_note (PRC-111)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:17:53
++++ b/parcelo/shipments.py	2026-11-12 03:00:36
+@@ -28,3 +28,13 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def add_note(shipment_id, text):
++    shipment = get_shipment(shipment_id)
++    if not isinstance(text, str) or not text.strip():
++        raise DomainError("E_BAD_INPUT", "note text must be non-empty")
++    text = text.strip()
++    shipment.notes.append({"text": text, "at": clock.now()})
++    audit.record("shipment.note_added", shipment_id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_add_note.py b/tests/unit/test_add_note.py
+--- a/tests/unit/test_add_note.py	1969-12-31 19:00:00
++++ b/tests/unit/test_add_note.py	2026-11-12 03:00:44
+@@ -0,0 +1,57 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, shipments
++from parcelo.errors import DomainError
++
++
++def _shipment():
++    c = customers.add_customer("Acme", "standard")
++    return shipments.create_shipment(c.id, 1.5, "national")
++
++
++def test_add_note_appends_text_and_time():
++    s = _shipment()
++    moment = datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    result = shipments.add_note(s.id, "left at back door")
++    assert result is s
++    assert s.notes == [{"text": "left at back door", "at": moment}]
++
++
++def test_add_note_keeps_earlier_notes_in_order():
++    s = _shipment()
++    first = datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
++    second = datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc)
++    clock.set_fixed(first)
++    shipments.add_note(s.id, "first")
++    clock.set_fixed(second)
++    shipments.add_note(s.id, "second")
++    assert [n["text"] for n in s.notes] == ["first", "second"]
++    assert [n["at"] for n in s.notes] == [first, second]
++
++
++def test_add_note_records_audit():
++    s = _shipment()
++    shipments.add_note(s.id, "hello")
++    assert audit.LOG[-1]["action"] == "shipment.note_added"
++    assert audit.LOG[-1]["entity_id"] == s.id
++
++
++def test_missing_shipment_fails():
++    with pytest.raises(DomainError) as err:
++        shipments.add_note("shp_missing", "hello")
++    assert err.value.code == "E_NOT_FOUND"
++    assert audit.LOG == []
++
++
++@pytest.mark.parametrize("text", ["", "   ", None])
++def test_empty_text_fails(text):
++    s = _shipment()
++    audit.LOG.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.add_note(s.id, text)
++    assert err.value.code == "E_BAD_INPUT"
++    assert s.notes == []
++    assert audit.LOG == []

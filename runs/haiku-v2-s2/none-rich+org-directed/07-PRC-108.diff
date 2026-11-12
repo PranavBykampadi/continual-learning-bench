@@ -1,0 +1,70 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:54:44
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: outstanding balances by customer (PRC-108)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:54:43
+@@ -1,6 +1,26 @@
+ from datetime import datetime
+ 
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def outstanding_by_customer():
++    """Return what each customer still owes on open invoices.
++
++    Paid and void invoices are excluded. Every customer appears in the result,
++    with a zero balance if they have no open invoices.
++
++    Returns:
++        dict: Maps customer id to a Money total of that customer's open invoices.
++    """
++    totals = {customer_id: Money.zero() for customer_id in db.customers}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        shipment = db.shipments[invoice.shipment_id]
++        current = totals.get(shipment.customer_id, Money.zero())
++        totals[shipment.customer_id] = current + Money.parse(invoice.amount)
++    return totals
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:54:46
+@@ -0,0 +1,25 @@
++from parcelo import customers, invoices, reports, shipments
++from parcelo.money import Money
++
++
++def test_outstanding_by_customer_counts_only_open_invoices():
++    acme = customers.add_customer("Acme")
++    globex = customers.add_customer("Globex")
++    idle = customers.add_customer("Idle")
++
++    open_small = invoices.issue_invoice(shipments.create_shipment(acme.id, 2, "local").id)  # 7.00
++    paid = invoices.issue_invoice(shipments.create_shipment(acme.id, 2, "local").id)  # 7.00
++    void = invoices.issue_invoice(shipments.create_shipment(globex.id, 2, "local").id)  # 7.00
++    open_big = invoices.issue_invoice(shipments.create_shipment(acme.id, 4, "national").id)  # 14.00
++
++    invoices.mark_paid(paid.id)
++    void.status = "void"
++
++    result = reports.outstanding_by_customer()
++
++    assert result == {acme.id: Money(2100), globex.id: Money(0), idle.id: Money(0)}
++    assert open_small.status == "open" and open_big.status == "open"
++
++
++def test_outstanding_by_customer_empty_store():
++    assert reports.outstanding_by_customer() == {}

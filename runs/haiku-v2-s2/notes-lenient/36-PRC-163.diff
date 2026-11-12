@@ -1,0 +1,130 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:16:00
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-163] customers: add lock_customer to lock an account
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:16:00
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.lock_customer(customer_id)`: lock an account after suspicious logins; no-op if already locked; raises `E_NOT_FOUND`
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:15:59
+@@ -1,5 +1,7 @@
+ import uuid
+ 
++from parcelo import audit, events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +20,18 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def lock_customer(customer_id):
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    customer = db.customers[customer_id]
++    if customer.locked:
++        return customer
++    customer.locked = True
++    audit.record("customer.locked", customer_id)
++    events.emit("customer.locked", customer_id)
++    return customer
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:15:57
+@@ -8,6 +8,7 @@
+     tier: str = "standard"
+     credit_limit: float = 500.0
+     active: bool = True
++    locked: bool = False
+ 
+ 
+ @dataclass
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customer_lock.py b/tests/unit/test_customer_lock.py
+--- a/tests/unit/test_customer_lock.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customer_lock.py	2026-11-12 03:16:03
+@@ -0,0 +1,63 @@
++import pytest
++
++from parcelo import audit, clock, customers, events, ids, store
++from parcelo.errors import DomainError
++
++
++@pytest.fixture(autouse=True)
++def clean_state():
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++    yield
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++
++
++def test_new_customer_is_not_locked():
++    c = customers.add_customer("Acme")
++    assert c.locked is False
++
++
++def test_lock_sets_flag_and_returns_customer():
++    c = customers.add_customer("Acme")
++    result = customers.lock_customer(c.id)
++    assert result is c
++    assert result.locked is True
++    assert customers.get_customer(c.id).locked is True
++
++
++def test_lock_emits_event_and_audit_once():
++    c = customers.add_customer("Acme")
++    customers.lock_customer(c.id)
++    assert [e["name"] for e in events.OUTBOX] == ["customer.locked"]
++    assert [a["action"] for a in audit.LOG] == ["customer.locked"]
++
++
++def test_lock_is_idempotent():
++    c = customers.add_customer("Acme")
++    first = customers.lock_customer(c.id)
++    events_before = len(events.OUTBOX)
++    audit_before = len(audit.LOG)
++
++    second = customers.lock_customer(c.id)
++
++    assert second is first
++    assert second.locked is True
++    assert len(events.OUTBOX) == events_before
++    assert len(audit.LOG) == audit_before
++
++
++def test_lock_unknown_customer_raises_and_changes_nothing():
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        customers.lock_customer("C_missing")
++    assert err.value.code == "E_NOT_FOUND"
++    assert customers.get_customer(c.id).locked is False
++    assert len(events.OUTBOX) == 0
++    assert len(audit.LOG) == 0

@@ -1,0 +1,152 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:58:50
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report for open invoices (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:58:40
+@@ -1,8 +1,18 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.legacy.billing import days_between
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ 
++def _as_utc(moment):
++    """Invoices may carry naive UTC timestamps; treat those as UTC."""
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment
++
++
+ def revenue_total():
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+@@ -12,6 +22,24 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def aging_report():
++    """Total open invoice amounts (in dollars) bucketed by age in whole days."""
++    now = _as_utc(clock.now())
++    cents = {"0-30": 0, "31-60": 0, "60+": 0}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        age = days_between(_as_utc(invoice.issued_at), now)
++        if age <= 30:
++            bucket = "0-30"
++        elif age <= 60:
++            bucket = "31-60"
++        else:
++            bucket = "60+"
++        cents[bucket] += Money.parse(invoice.amount).cents
++    return {bucket: round(total / 100, 2) for bucket, total in cents.items()}
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_aging.py b/tests/unit/test_aging.py
+--- a/tests/unit/test_aging.py	1969-12-31 19:00:00
++++ b/tests/unit/test_aging.py	2026-11-12 02:58:48
+@@ -0,0 +1,89 @@
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, ids, invoices, reports, shipments, store
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++@pytest.fixture(autouse=True)
++def clean_state():
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    clock.clear_fixed()
++    yield
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    clock.clear_fixed()
++
++
++def make_invoice(age_days, status="open"):
++    """Issue an invoice through the public API, then backdate it and set its status."""
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    inv.issued_at = NOW - timedelta(days=age_days)
++    inv.status = status
++    return inv
++
++
++def test_empty_report_is_all_zero():
++    clock.set_fixed(NOW)
++    assert reports.aging_report() == {"0-30": 0, "31-60": 0, "60+": 0}
++
++
++@pytest.mark.parametrize(
++    "age_days, bucket",
++    [
++        (0, "0-30"),
++        (30, "0-30"),
++        (31, "31-60"),
++        (60, "31-60"),
++        (61, "60+"),
++        (400, "60+"),
++    ],
++)
++def test_bucket_boundaries(age_days, bucket):
++    clock.set_fixed(NOW)
++    inv = make_invoice(age_days)
++    report = reports.aging_report()
++    assert report[bucket] == pytest.approx(inv.amount)
++    assert sum(report.values()) == pytest.approx(inv.amount)
++
++
++def test_paid_invoices_are_excluded():
++    clock.set_fixed(NOW)
++    make_invoice(10, status="paid")
++    assert reports.aging_report() == {"0-30": 0, "31-60": 0, "60+": 0}
++
++
++def test_totals_sum_per_bucket():
++    clock.set_fixed(NOW)
++    a = make_invoice(5)
++    b = make_invoice(45)
++    c = make_invoice(90)
++    report = reports.aging_report()
++    assert report["0-30"] == pytest.approx(a.amount)
++    assert report["31-60"] == pytest.approx(b.amount)
++    assert report["60+"] == pytest.approx(c.amount)
++
++
++def test_handles_naive_issued_at_from_invoice_service():
++    # issue_invoice stores naive UTC timestamps; the report must still age them.
++    clock.set_fixed(NOW)
++    inv = make_invoice(0)
++    inv.issued_at = datetime(2026, 11, 12, 12, 0) - timedelta(days=40)
++    assert reports.aging_report()["31-60"] == pytest.approx(inv.amount)
++
++
++def test_does_not_modify_invoices_or_audit_log():
++    clock.set_fixed(NOW)
++    inv = make_invoice(10)
++    before = (inv.status, inv.amount, inv.issued_at)
++    log_len = len(audit.LOG)
++    reports.aging_report()
++    assert (inv.status, inv.amount, inv.issued_at) == before
++    assert len(audit.LOG) == log_len

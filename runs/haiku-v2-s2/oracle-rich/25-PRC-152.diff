@@ -1,0 +1,107 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:01:20
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- shipments: mark shipment lost (PRC-152)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:01:20
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_lost(shipment_id)`: set a shipment's status to "lost"; fails if it is delivered
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 03:01:19
+@@ -28,3 +28,14 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def mark_lost(shipment_id):
++    shipment = get_shipment(shipment_id)
++    if shipment.status == "lost":
++        return shipment
++    if shipment.status == "delivered" or shipment.delivered_at is not None:
++        raise DomainError("E_BAD_STATE", shipment_id)
++    shipment.status = "lost"
++    events.emit("shipment.lost", shipment.id)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_mark_lost.py b/tests/unit/test_mark_lost.py
+--- a/tests/unit/test_mark_lost.py	1969-12-31 19:00:00
++++ b/tests/unit/test_mark_lost.py	2026-11-12 03:01:24
+@@ -0,0 +1,63 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _shipment():
++    c = customers.add_customer("Acme")
++    return shipments.create_shipment(c.id, 1.5, "national")
++
++
++def test_mark_lost_sets_status_and_returns_shipment():
++    s = _shipment()
++    result = shipments.mark_lost(s.id)
++    assert result is s
++    assert s.status == "lost"
++    assert db.shipments[s.id].status == "lost"
++
++
++def test_mark_lost_emits_event():
++    s = _shipment()
++    events.OUTBOX.clear()
++    shipments.mark_lost(s.id)
++    assert len(events.OUTBOX) == 1
++    assert events.OUTBOX[-1]["name"] == "shipment.lost"
++    assert events.OUTBOX[-1]["entity_id"] == s.id
++
++
++def test_mark_lost_unknown_shipment_fails():
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost("shp_missing")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_mark_lost_delivered_status_fails():
++    s = _shipment()
++    s.status = "delivered"
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(s.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert s.status == "delivered"
++    assert events.OUTBOX == []
++
++
++def test_mark_lost_with_delivered_at_fails():
++    s = _shipment()
++    s.delivered_at = "2026-11-10T10:00:00+00:00"
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(s.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert s.status == "created"
++
++
++def test_mark_lost_is_idempotent():
++    s = _shipment()
++    shipments.mark_lost(s.id)
++    events.OUTBOX.clear()
++    result = shipments.mark_lost(s.id)
++    assert result is s
++    assert s.status == "lost"
++    assert events.OUTBOX == []

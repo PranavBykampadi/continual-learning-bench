@@ -1,0 +1,117 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:59:30
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: invoice aging report (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:59:32
+@@ -1,8 +1,12 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock, invoices
++from parcelo.legacy.billing import days_between
+ from parcelo.store import db
+ 
++AGING_BUCKETS = ("0-30", "31-60", "60+")
+ 
++
+ def revenue_total():
+     return round(sum(i.amount for i in db.invoices.values() if i.status == "paid"), 2)
+ 
+@@ -22,3 +26,27 @@
+     }
+     print("summary generated")
+     return summary
++
++
++def _as_utc(moment):
++    # invoices.issue_invoice stores naive UTC datetimes; clock.now() is aware.
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment.astimezone(timezone.utc)
++
++
++def _aging_bucket(age_days):
++    if age_days <= 30:
++        return "0-30"
++    if age_days <= 60:
++        return "31-60"
++    return "60+"
++
++
++def aging_report():
++    now = _as_utc(clock.now())
++    totals = {bucket: 0.0 for bucket in AGING_BUCKETS}
++    for invoice in invoices.open_invoices():
++        age = days_between(_as_utc(invoice.issued_at), now)
++        totals[_aging_bucket(age)] += invoice.amount
++    return {bucket: round(total, 2) for bucket, total in totals.items()}
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 02:59:40
+@@ -0,0 +1,57 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import clock, reports
++from parcelo.models import Invoice
++from parcelo.store import db
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++def _add(amount, days_old, status="open", naive=False):
++    issued = NOW - timedelta(days=days_old)
++    if naive:
++        issued = issued.replace(tzinfo=None)
++    inv = Invoice(
++        id="INV-%03d" % len(db.invoices),
++        shipment_id="SHP-x",
++        amount=amount,
++        status=status,
++        issued_at=issued,
++    )
++    db.invoices[inv.id] = inv
++    return inv
++
++
++def test_empty_buckets_are_zero():
++    clock.set_fixed(NOW)
++    assert reports.aging_report() == {"0-30": 0.0, "31-60": 0.0, "60+": 0.0}
++
++
++def test_bucket_boundaries():
++    clock.set_fixed(NOW)
++    _add(1.0, 0)
++    _add(2.0, 30)
++    _add(4.0, 31)
++    _add(8.0, 60)
++    _add(16.0, 61)
++    assert reports.aging_report() == {"0-30": 3.0, "31-60": 12.0, "60+": 16.0}
++
++
++def test_paid_invoices_are_excluded():
++    clock.set_fixed(NOW)
++    _add(5.0, 10, status="paid")
++    _add(7.0, 90)
++    assert reports.aging_report() == {"0-30": 0.0, "31-60": 0.0, "60+": 7.0}
++
++
++def test_naive_issued_at_matches_issue_invoice():
++    clock.set_fixed(NOW)
++    _add(3.0, 45, naive=True)
++    assert reports.aging_report()["31-60"] == 3.0
++
++
++def test_totals_are_rounded_to_cents():
++    clock.set_fixed(NOW)
++    _add(0.1, 1)
++    _add(0.2, 1)
++    assert reports.aging_report()["0-30"] == 0.3

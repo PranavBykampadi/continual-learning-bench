@@ -1,0 +1,134 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:13:20
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-162] invoices: list invoices by status
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:13:21
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## invoices
++
++- `invoices.invoices_by_status(status)`: list invoices whose status is `status`; `status` must be `"open"` or `"paid"`. Returns a list (not `Money`), sorted by invoice id ascending; empty list if none match. Raises `E_BAD_INPUT` if `status` is any other value. Emits no events. Read-only, so safe to call repeatedly.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:13:20
+@@ -1,6 +1,7 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+@@ -32,3 +33,13 @@
+ 
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
++
++
++VALID_STATUSES = ("open", "paid")
++
++
++def invoices_by_status(status):
++    if status not in VALID_STATUSES:
++        raise DomainError("E_BAD_INPUT", str(status))
++    matches = [i for i in db.invoices.values() if i.status == status]
++    return sorted(matches, key=lambda x: x.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoices_by_status.py b/tests/unit/test_invoices_by_status.py
+--- a/tests/unit/test_invoices_by_status.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoices_by_status.py	2026-11-12 03:13:26
+@@ -0,0 +1,83 @@
++import copy
++
++import pytest
++
++from parcelo import customers, events, invoices, shipments, store
++from parcelo.errors import DomainError
++from parcelo.models import Invoice
++
++
++def _issue(weight, zone="local"):
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, weight, zone)
++    return invoices.issue_invoice(s.id)
++
++
++def test_returns_only_invoices_with_given_status():
++    open_inv = _issue(1)
++    paid_inv = _issue(2)
++    invoices.mark_paid(paid_inv.id)
++
++    assert [i.id for i in invoices.invoices_by_status("open")] == [open_inv.id]
++    assert [i.id for i in invoices.invoices_by_status("paid")] == [paid_inv.id]
++
++
++def test_empty_list_when_none_match():
++    _issue(1)
++    assert invoices.invoices_by_status("paid") == []
++
++
++def test_empty_list_when_no_invoices():
++    assert invoices.invoices_by_status("open") == []
++    assert invoices.invoices_by_status("paid") == []
++
++
++def test_sorted_by_id_ascending_not_storage_order():
++    # Insert out of id order so storage order differs from id order.
++    for inv_id in ["INV-c", "INV-a", "INV-b"]:
++        store.db.invoices[inv_id] = Invoice(id=inv_id, shipment_id="shp_x", amount=1.0)
++
++    result = invoices.invoices_by_status("open")
++    assert [i.id for i in result] == ["INV-a", "INV-b", "INV-c"]
++
++
++@pytest.mark.parametrize("bad", ["void", "OPEN", "", None, "paid "])
++def test_invalid_status_raises(bad):
++    _issue(1)
++    with pytest.raises(DomainError) as err:
++        invoices.invoices_by_status(bad)
++    assert err.value.code == "E_BAD_INPUT"
++
++
++def test_success_leaves_store_and_outbox_unchanged():
++    _issue(1)
++    invoices.mark_paid(list(store.db.invoices)[0])
++    _issue(2)
++
++    before_store = copy.deepcopy(store.db.invoices)
++    before_outbox = copy.deepcopy(events.OUTBOX)
++
++    invoices.invoices_by_status("open")
++    invoices.invoices_by_status("paid")
++
++    assert store.db.invoices == before_store
++    assert events.OUTBOX == before_outbox
++
++
++def test_rejected_call_leaves_store_and_outbox_unchanged():
++    _issue(1)
++    before_store = copy.deepcopy(store.db.invoices)
++    before_outbox = copy.deepcopy(events.OUTBOX)
++
++    with pytest.raises(DomainError):
++        invoices.invoices_by_status("void")
++
++    assert store.db.invoices == before_store
++    assert events.OUTBOX == before_outbox
++
++
++def test_emits_no_events():
++    _issue(1)
++    events.OUTBOX.clear()
++    invoices.invoices_by_status("open")
++    assert events.OUTBOX == []

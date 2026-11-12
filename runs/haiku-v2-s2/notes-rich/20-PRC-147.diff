@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:03:51
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: add per-customer volume report (PRC-147)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:03:52
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: dict keyed by customer id, each value `{"shipments": count, "tier": label}`, with every customer included (count 0 if none). Read-only, emits no events; raises nothing.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:03:47
+@@ -14,6 +14,31 @@
+     return counts
+ 
+ 
++def _volume_tier(shipment_count):
++    # Same thresholds as volume_tier in parcelo/legacy/billing.py. Copied here
++    # because parcelo.legacy is scheduled for deletion.
++    if shipment_count >= 50:
++        return "bulk"
++    if shipment_count >= 10:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Shipment count and volume tier for every customer, keyed by customer id.
++
++    Customers with no shipments are included with a count of 0. Read-only.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 03:03:51
+@@ -0,0 +1,50 @@
++from parcelo import customers, events, reports, shipments
++
++
++def _book(customer_id, count):
++    for _ in range(count):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_includes_every_customer_even_without_shipments():
++    idle = customers.add_customer("Idle")
++    busy = customers.add_customer("Busy")
++    _book(busy.id, 2)
++
++    report = reports.volume_report()
++
++    assert set(report) == {idle.id, busy.id}
++    assert report[idle.id] == {"shipments": 0, "tier": "starter"}
++    assert report[busy.id] == {"shipments": 2, "tier": "starter"}
++
++
++def test_empty_when_no_customers():
++    assert reports.volume_report() == {}
++
++
++def test_tier_thresholds():
++    starter_9 = customers.add_customer("Nine")
++    regular_10 = customers.add_customer("Ten")
++    regular_49 = customers.add_customer("FortyNine")
++    bulk_50 = customers.add_customer("Fifty")
++    _book(starter_9.id, 9)
++    _book(regular_10.id, 10)
++    _book(regular_49.id, 49)
++    _book(bulk_50.id, 50)
++
++    report = reports.volume_report()
++
++    assert report[starter_9.id] == {"shipments": 9, "tier": "starter"}
++    assert report[regular_10.id] == {"shipments": 10, "tier": "regular"}
++    assert report[regular_49.id] == {"shipments": 49, "tier": "regular"}
++    assert report[bulk_50.id] == {"shipments": 50, "tier": "bulk"}
++
++
++def test_report_is_read_only_and_emits_nothing():
++    c = customers.add_customer("Acme")
++    _book(c.id, 3)
++    events.OUTBOX.clear()
++
++    reports.volume_report()
++
++    assert events.OUTBOX == []

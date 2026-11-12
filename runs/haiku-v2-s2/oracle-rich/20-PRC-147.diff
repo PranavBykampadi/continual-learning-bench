@@ -1,0 +1,119 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:59:13
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- reports: add per-customer volume report (PRC-147)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:59:14
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: per-customer shipment count and volume tier, keyed by customer id
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 02:59:10
+@@ -1,6 +1,28 @@
+ from datetime import datetime
+ 
++from parcelo.settings import BULK_TIER_MIN_SHIPMENTS, REGULAR_TIER_MIN_SHIPMENTS
+ from parcelo.store import db
++
++
++def _volume_tier(shipment_count):
++    if shipment_count >= BULK_TIER_MIN_SHIPMENTS:
++        return "bulk"
++    if shipment_count >= REGULAR_TIER_MIN_SHIPMENTS:
++        return "regular"
++    return "starter"
++
++
++def volume_report():
++    """Per-customer shipment counts and volume tier, keyed by customer id (sorted)."""
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    report = {}
++    for customer_id in sorted(counts):
++        count = counts[customer_id]
++        report[customer_id] = {"shipments": count, "tier": _volume_tier(count)}
++    return report
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 02:59:08
+@@ -0,0 +1,5 @@
++"""Business thresholds, limits and rates used by new code."""
++
++# Shipment-count thresholds for volume tiers (same values as legacy billing).
++BULK_TIER_MIN_SHIPMENTS = 50
++REGULAR_TIER_MIN_SHIPMENTS = 10
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 02:59:17
+@@ -0,0 +1,52 @@
++from parcelo import customers, events, reports, shipments
++from parcelo.settings import BULK_TIER_MIN_SHIPMENTS, REGULAR_TIER_MIN_SHIPMENTS
++
++
++def _book(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_includes_customers_without_shipments():
++    c = customers.add_customer("Empty")
++    report = reports.volume_report()
++    assert report == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_only_own_shipments():
++    a = customers.add_customer("A")
++    b = customers.add_customer("B")
++    _book(a.id, 3)
++    _book(b.id, 1)
++    report = reports.volume_report()
++    assert report[a.id]["shipments"] == 3
++    assert report[b.id]["shipments"] == 1
++
++
++def test_tier_thresholds():
++    assert REGULAR_TIER_MIN_SHIPMENTS == 10
++    assert BULK_TIER_MIN_SHIPMENTS == 50
++    low = customers.add_customer("Low")
++    mid = customers.add_customer("Mid")
++    high = customers.add_customer("High")
++    _book(low.id, REGULAR_TIER_MIN_SHIPMENTS - 1)
++    _book(mid.id, REGULAR_TIER_MIN_SHIPMENTS)
++    _book(high.id, BULK_TIER_MIN_SHIPMENTS)
++    report = reports.volume_report()
++    assert report[low.id]["tier"] == "starter"
++    assert report[mid.id]["tier"] == "regular"
++    assert report[high.id]["tier"] == "bulk"
++
++
++def test_keys_sorted_by_id():
++    for name in ("x", "y", "z"):
++        customers.add_customer(name)
++    keys = list(reports.volume_report().keys())
++    assert keys == sorted(keys)
++
++
++def test_does_not_emit_events():
++    customers.add_customer("Quiet")
++    events.OUTBOX.clear()
++    reports.volume_report()
++    assert events.OUTBOX == []

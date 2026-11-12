@@ -1,0 +1,118 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:33:58
+@@ -3,6 +3,7 @@
+ ## Unreleased
+ 
+ - shipments: validate zone on create (PRC-088)
++- shipments: list shipments by zone (PRC-159)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:33:59
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.shipments_in_zone(zone)`: list shipments going to a zone, sorted by id
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 03:33:57
+@@ -28,3 +28,15 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++def shipments_in_zone(zone):
++    """Return the shipments whose zone is `zone`, sorted by id ascending.
++
++    Returns an empty list if no shipment goes to that zone. Raises
++    E_BAD_ZONE if `zone` is not a known zone.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", zone)
++    matches = [s for s in db.shipments.values() if s.zone == zone]
++    return sorted(matches, key=lambda s: s.id)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_in_zone.py b/tests/unit/test_shipments_in_zone.py
+--- a/tests/unit/test_shipments_in_zone.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_in_zone.py	2026-11-12 03:34:06
+@@ -0,0 +1,73 @@
++import pytest
++
++from parcelo import customers, events, ids, shipments
++from parcelo.errors import DomainError
++from parcelo.store import db
++
++
++def _make(customer_id, zone):
++    return shipments.create_shipment(customer_id, 1.0, zone)
++
++
++def test_returns_only_shipments_in_zone():
++    c = customers.add_customer("Acme")
++    local = _make(c.id, "local")
++    national = _make(c.id, "national")
++    other_local = _make(c.id, "local")
++    events.OUTBOX.clear()
++
++    result = shipments.shipments_in_zone("local")
++
++    assert [s.id for s in result] == [local.id, other_local.id]
++    assert all(s.zone == "local" for s in result)
++    assert national not in result
++
++
++def test_empty_list_when_no_shipment_in_zone():
++    c = customers.add_customer("Acme")
++    _make(c.id, "local")
++
++    assert shipments.shipments_in_zone("international") == []
++
++
++def test_empty_list_when_no_shipments_at_all():
++    assert shipments.shipments_in_zone("national") == []
++
++
++def test_result_sorted_by_id_even_when_storage_order_differs():
++    c = customers.add_customer("Acme")
++    first = _make(c.id, "national")   # smaller id
++    second = _make(c.id, "national")  # larger id
++    # Store them in reverse id order so storage order differs from id order.
++    db.shipments.clear()
++    db.shipments[second.id] = second
++    db.shipments[first.id] = first
++    assert list(db.shipments) == [second.id, first.id]
++
++    result = shipments.shipments_in_zone("national")
++
++    assert [s.id for s in result] == [first.id, second.id]
++
++
++@pytest.mark.parametrize("bad_zone", ["moon", "", "LOCAL"])
++def test_unknown_zone_raises(bad_zone):
++    with pytest.raises(DomainError) as err:
++        shipments.shipments_in_zone(bad_zone)
++    assert err.value.code == "E_BAD_ZONE"
++
++
++def test_unknown_zone_does_not_emit_event():
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError):
++        shipments.shipments_in_zone("moon")
++    assert events.OUTBOX == []
++
++
++def test_read_does_not_emit_event():
++    c = customers.add_customer("Acme")
++    _make(c.id, "local")
++    events.OUTBOX.clear()
++
++    shipments.shipments_in_zone("local")
++
++    assert events.OUTBOX == []

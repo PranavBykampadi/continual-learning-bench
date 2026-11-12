@@ -1,0 +1,136 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:16:28
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- customers: add set_credit_limit (PRC-150)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:16:19
+@@ -1,6 +1,10 @@
+ import uuid
++from decimal import Decimal, InvalidOperation
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
+@@ -27,3 +31,33 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def _parse_credit_limit(amount):
++    if amount is None or isinstance(amount, bool):
++        raise DomainError("E_BAD_INPUT", "credit limit must be an amount")
++    try:
++        limit = Money.parse(amount)
++    except (InvalidOperation, ValueError, TypeError):
++        raise DomainError("E_BAD_INPUT", f"invalid credit limit {amount!r}")
++    if limit.cents < 0:
++        raise DomainError("E_BAD_INPUT", "credit limit must not be negative")
++    return limit
++
++
++def set_credit_limit(customer_id, amount):
++    """Set a customer's credit limit and return the new limit as Money."""
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise DomainError("E_NOT_FOUND", f"customer {customer_id} not found")
++    new_limit = _parse_credit_limit(amount)
++    old_limit = Money.parse(customer.credit_limit)
++    # Customer.credit_limit is an old-style float field; keep its type.
++    customer.credit_limit = float(Decimal(new_limit.cents) / 100)
++    events.emit(
++        "customer.credit_limit_changed",
++        customer.id,
++        from_limit=old_limit,
++        to_limit=new_limit,
++    )
++    return new_limit
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_credit_limit.py b/tests/unit/test_customers_credit_limit.py
+--- a/tests/unit/test_customers_credit_limit.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_credit_limit.py	2026-11-12 03:16:27
+@@ -0,0 +1,73 @@
++import pytest
++
++from parcelo import events
++from parcelo.customers import add_customer, set_credit_limit
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++
++
++@pytest.fixture
++def customer():
++    c = add_customer("Acme")
++    events.OUTBOX.clear()
++    return c
++
++
++def test_set_credit_limit_updates_and_returns_money(customer):
++    result = set_credit_limit(customer.id, "1250.50")
++
++    assert result == Money.parse("1250.50")
++    assert db.customers[customer.id].credit_limit == 1250.50
++
++
++def test_set_credit_limit_emits_event(customer):
++    set_credit_limit(customer.id, Money.parse("750"))
++
++    assert len(events.OUTBOX) == 1
++    event = events.OUTBOX[0]
++    assert event["name"] == "customer.credit_limit_changed"
++    assert event["entity_id"] == customer.id
++    assert event["payload"] == {
++        "from_limit": Money.parse("500"),
++        "to_limit": Money.parse("750"),
++    }
++
++
++def test_set_credit_limit_avoids_float_drift(customer):
++    result = set_credit_limit(customer.id, 0.1 + 0.2)
++
++    assert result == Money(30)
++    assert db.customers[customer.id].credit_limit == 0.3
++
++
++def test_zero_limit_is_allowed(customer):
++    assert set_credit_limit(customer.id, 0) == Money.zero()
++    assert customer.credit_limit == 0.0
++
++
++def test_unknown_customer_fails():
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit("C_missing", "100")
++
++    assert exc.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++def test_negative_amount_fails(customer):
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit(customer.id, "-0.01")
++
++    assert exc.value.code == "E_BAD_INPUT"
++    assert customer.credit_limit == 500.0
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("bad", [None, True, "abc", object()])
++def test_invalid_amount_fails(customer, bad):
++    with pytest.raises(DomainError) as exc:
++        set_credit_limit(customer.id, bad)
++
++    assert exc.value.code == "E_BAD_INPUT"
++    assert customer.credit_limit == 500.0
++    assert events.OUTBOX == []

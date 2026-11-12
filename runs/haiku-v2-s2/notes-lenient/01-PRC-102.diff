@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:48:39
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- invoices: void invoice (PRC-102)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 02:48:39
+@@ -1,11 +1,19 @@
+ import uuid
+ from datetime import datetime
+ 
++from parcelo import audit, clock
++from parcelo.errors import DomainError
+ from parcelo.models import Invoice
+ from parcelo.rates import quote
+ from parcelo.store import db
+ 
+ 
++def get_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise DomainError("E_NOT_FOUND", invoice_id)
++    return db.invoices[invoice_id]
++
++
+ def issue_invoice(shipment_id):
+     shipment = db.shipments[shipment_id]
+     invoice = Invoice(
+@@ -27,6 +35,18 @@
+         raise ValueError("already paid")
+     invoice.status = "paid"
+     invoice.paid_at = datetime.now()
++    return invoice
++
++
++def void_invoice(invoice_id):
++    invoice = get_invoice(invoice_id)
++    if invoice.status == "paid":
++        raise DomainError("E_BAD_STATE", "invoice already paid")
++    if invoice.status == "void":
++        raise DomainError("E_BAD_STATE", "invoice already void")
++    invoice.status = "void"
++    invoice.voided_at = clock.now()
++    audit.record("invoice.voided", invoice.id)
+     return invoice
+ 
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 02:48:37
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    voided_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_invoice_void.py b/tests/unit/test_invoice_void.py
+--- a/tests/unit/test_invoice_void.py	1969-12-31 19:00:00
++++ b/tests/unit/test_invoice_void.py	2026-11-12 02:48:47
+@@ -0,0 +1,46 @@
++from datetime import datetime, timezone
++
++import pytest
++
++from parcelo import audit, clock, customers, invoices, shipments
++from parcelo.errors import DomainError
++
++
++def _issued_invoice():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    return invoices.issue_invoice(s.id)
++
++
++def test_void_sets_status_and_timestamp():
++    moment = datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)
++    clock.set_fixed(moment)
++    inv = _issued_invoice()
++    result = invoices.void_invoice(inv.id)
++    assert result is inv
++    assert inv.status == "void"
++    assert inv.voided_at == moment
++    assert audit.LOG[-1]["action"] == "invoice.voided"
++
++
++def test_void_not_found():
++    with pytest.raises(DomainError) as err:
++        invoices.void_invoice("INV-missing")
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_void_already_paid():
++    inv = _issued_invoice()
++    invoices.mark_paid(inv.id)
++    with pytest.raises(DomainError) as err:
++        invoices.void_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert inv.status == "paid"
++
++
++def test_void_already_void():
++    inv = _issued_invoice()
++    invoices.void_invoice(inv.id)
++    with pytest.raises(DomainError) as err:
++        invoices.void_invoice(inv.id)
++    assert err.value.code == "E_BAD_STATE"

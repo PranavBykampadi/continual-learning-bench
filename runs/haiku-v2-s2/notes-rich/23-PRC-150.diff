@@ -1,0 +1,141 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:05:53
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- customers: add set_credit_limit (PRC-150)
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:05:53
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.set_credit_limit(customer_id, amount)`: set a customer's credit limit in dollars and return it as float; raises `E_NOT_FOUND` if the customer does not exist, and `E_BAD_INPUT` if `amount` is missing, not finite, or not positive; emits `customer.credit_limit_changed`
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:05:51
+@@ -1,9 +1,55 @@
+ import uuid
++from decimal import Decimal, InvalidOperation
+ 
++from parcelo import events
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
+ TIERS = ("standard", "gold")
++
++
++def _parse_limit(amount):
++    """Validate a credit limit given in dollars and return it as Money.
++
++    Raises E_BAD_INPUT for None, blank strings, non-finite values, non-numeric
++    input, and non-positive amounts.
++    """
++    if amount is None:
++        raise DomainError("E_BAD_INPUT", "amount required")
++    if not isinstance(amount, Money):
++        if isinstance(amount, str) and not amount.strip():
++            raise DomainError("E_BAD_INPUT", "amount required")
++        try:
++            number = Decimal(str(amount).strip())
++        except (InvalidOperation, TypeError, ValueError):
++            raise DomainError("E_BAD_INPUT", f"not a number: {amount!r}")
++        if not number.is_finite():
++            raise DomainError("E_BAD_INPUT", f"not finite: {amount!r}")
++    try:
++        money = Money.parse(amount)
++    except (InvalidOperation, TypeError, ValueError, OverflowError):
++        raise DomainError("E_BAD_INPUT", f"not a number: {amount!r}")
++    if money.cents <= 0:
++        raise DomainError("E_BAD_INPUT", "credit limit must be positive")
++    return money
++
++
++def set_credit_limit(customer_id, amount):
++    """Set a customer's credit limit in dollars and return the new limit as float.
++
++    Raises E_BAD_INPUT if amount is missing, not a finite number, or not positive.
++    Raises E_NOT_FOUND if the customer does not exist.
++    Emits customer.credit_limit_changed for the customer.
++    """
++    money = _parse_limit(amount)
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    customer = db.customers[customer_id]
++    customer.credit_limit = money.cents / 100
++    events.emit("customer.credit_limit_changed", customer.id, credit_limit=customer.credit_limit)
++    return customer.credit_limit
+ 
+ 
+ def add_customer(name, tier="standard"):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 03:05:57
+@@ -0,0 +1,56 @@
++import math
++from decimal import Decimal
++
++import pytest
++
++from parcelo import customers, events
++from parcelo.errors import DomainError
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++    result = customers.set_credit_limit(c.id, 1250.5)
++    assert result == 1250.5
++    assert customers.get_customer(c.id).credit_limit == 1250.5
++    assert len(events.OUTBOX) == 1
++    assert events.OUTBOX[0]["name"] == "customer.credit_limit_changed"
++    assert events.OUTBOX[0]["entity_id"] == c.id
++
++
++def test_set_credit_limit_accepts_decimal_and_string():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, Decimal("99.99")) == 99.99
++    assert customers.set_credit_limit(c.id, "300") == 300.0
++
++
++def test_set_credit_limit_unknown_customer():
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit("C-missing", 100)
++    assert err.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("amount", [-1, -0.01, 0, 0.0, "-5", Decimal("-2.50")])
++def test_set_credit_limit_rejects_non_positive(amount):
++    c = customers.add_customer("Acme")
++    before = customers.get_customer(c.id).credit_limit
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert customers.get_customer(c.id).credit_limit == before
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize(
++    "amount",
++    [None, "", "   ", float("inf"), float("-inf"), float("nan"), "nan", "inf", "abc", Decimal("NaN")],
++)
++def test_set_credit_limit_rejects_bad_input(amount):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert not math.isnan(customers.get_customer(c.id).credit_limit)

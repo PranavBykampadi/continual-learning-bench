@@ -1,0 +1,121 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:07:40
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- reports: add per-customer volume report (PRC-147)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:07:40
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: shipment count and volume tier per customer, including customers with no shipments (raises no error codes)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:07:39
+@@ -1,6 +1,34 @@
+ from datetime import datetime
+ 
++from parcelo import settings
+ from parcelo.store import db
++
++
++def _volume_tier(shipment_count: int) -> str:
++    if shipment_count >= settings.VOLUME_TIER_BULK_MIN:
++        return "bulk"
++    if shipment_count >= settings.VOLUME_TIER_REGULAR_MIN:
++        return "regular"
++    return "starter"
++
++
++def volume_report() -> dict:
++    """Return the shipment count and volume tier for every customer.
++
++    Customers with no shipments are included with a count of 0.
++    Shipments whose customer is unknown are left out.
++
++    Returns:
++        dict: Maps customer id to {"shipments": int, "tier": str}.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:07:37
+@@ -0,0 +1,9 @@
++"""Business thresholds and rates.
++
++Finance or product may ask us to change these values. Functions import them
++from here instead of hardcoding numbers.
++"""
++
++# Minimum shipment count for each customer volume tier.
++VOLUME_TIER_BULK_MIN = 50
++VOLUME_TIER_REGULAR_MIN = 10
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_volume.py b/tests/unit/test_reports_volume.py
+--- a/tests/unit/test_reports_volume.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_volume.py	2026-11-12 03:07:44
+@@ -0,0 +1,44 @@
++import pytest
++
++from parcelo import audit, customers, events, reports, shipments
++
++
++def _book(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_includes_customers_with_no_shipments():
++    idle = customers.add_customer("Idle Co")
++    report = reports.volume_report()
++    assert report == {idle.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_shipments_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Beta")
++    _book(a.id, 3)
++    _book(b.id, 1)
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++@pytest.mark.parametrize(
++    "count,tier",
++    [(9, "starter"), (10, "regular"), (49, "regular"), (50, "bulk")],
++)
++def test_tier_thresholds(count, tier):
++    c = customers.add_customer("Acme")
++    _book(c.id, count)
++    assert reports.volume_report()[c.id] == {"shipments": count, "tier": tier}
++
++
++def test_read_only_records_no_audit_or_events():
++    c = customers.add_customer("Acme")
++    _book(c.id, 2)
++    audit_before = len(audit.LOG)
++    events.OUTBOX.clear()
++    reports.volume_report()
++    assert len(audit.LOG) == audit_before
++    assert events.OUTBOX == []

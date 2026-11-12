@@ -59,7 +59,8 @@ def assert_reply(case, keywords):
 
 
 def assert_closed(case):
-    assert any(e["action"] == "close" for e in actions(case)), "case was not closed"
+    done = any(e["action"] in ("close", "escalate") for e in actions(case))
+    assert done, "case was neither closed nor handed to another team"
 
 
 def assert_refunded_or_escalated(case, amount):

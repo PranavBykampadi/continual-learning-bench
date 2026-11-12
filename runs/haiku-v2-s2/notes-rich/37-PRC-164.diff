@@ -1,0 +1,170 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:14:36
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-164] vouchers: add goodwill voucher issue
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:14:36
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## vouchers
++
++- `vouchers.issue_voucher(customer_id, amount)`: create a goodwill voucher for a customer and save it. Returns a `Voucher` (`amount` is a plain number of dollars, not `Money`). `raises E_BAD_INPUT if amount is not a number or is zero or negative`. `raises E_UNKNOWN_CUSTOMER if the customer does not exist`. `raises E_LIMIT if amount is more than 150.00`. Emits no events. Not idempotent: every call creates a new voucher. Not a list.
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:14:31
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Voucher:
++    id: str
++    customer_id: str
++    amount: float
++    issued_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:14:32
+@@ -0,0 +1,5 @@
++# Business numbers: thresholds, rates and limits. Finance changes these,
++# so keep them here and import them rather than writing bare numbers in code.
++
++# Largest single goodwill voucher that can be issued, in dollars.
++MAX_VOUCHER_AMOUNT = 150.00
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 03:14:31
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.vouchers = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.vouchers.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/vouchers.py b/parcelo/vouchers.py
+--- a/parcelo/vouchers.py	1969-12-31 19:00:00
++++ b/parcelo/vouchers.py	2026-11-12 03:14:46
+@@ -0,0 +1,22 @@
++from parcelo import clock, ids
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.settings import MAX_VOUCHER_AMOUNT
++from parcelo.store import db
++
++
++def issue_voucher(customer_id, amount):
++    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount <= 0:
++        raise DomainError("E_BAD_INPUT", str(amount))
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    if amount > MAX_VOUCHER_AMOUNT:
++        raise DomainError("E_LIMIT", str(amount))
++    voucher = Voucher(
++        id=ids.new_id("vch"),
++        customer_id=customer_id,
++        amount=amount,
++        issued_at=clock.now(),
++    )
++    db.vouchers[voucher.id] = voucher
++    return voucher
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_vouchers.py b/tests/unit/test_vouchers.py
+--- a/tests/unit/test_vouchers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_vouchers.py	2026-11-12 03:14:42
+@@ -0,0 +1,89 @@
++import copy
++
++import pytest
++
++from parcelo import customers, events, store, vouchers
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.settings import MAX_VOUCHER_AMOUNT
++
++
++def test_issue_voucher_saves_and_returns_voucher():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, 25)
++    assert isinstance(v, Voucher)
++    assert v.id.startswith("vch_")
++    assert v.customer_id == c.id
++    assert v.amount == 25
++    assert v.issued_at is not None
++    assert store.db.vouchers[v.id] is v
++
++
++def test_issue_voucher_emits_no_events():
++    c = customers.add_customer("Acme")
++    events.OUTBOX.clear()
++    vouchers.issue_voucher(c.id, 10)
++    assert events.OUTBOX == []
++
++
++def test_issue_voucher_is_not_idempotent():
++    c = customers.add_customer("Acme")
++    first = vouchers.issue_voucher(c.id, 10)
++    second = vouchers.issue_voucher(c.id, 10)
++    assert first.id != second.id
++    assert len(store.db.vouchers) == 2
++
++
++def test_amount_at_limit_is_allowed():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, MAX_VOUCHER_AMOUNT)
++    assert v.amount == MAX_VOUCHER_AMOUNT
++
++
++def test_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher("nope", 10)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++
++
++def test_amount_over_limit():
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher(c.id, MAX_VOUCHER_AMOUNT + 0.01)
++    assert err.value.code == "E_LIMIT"
++
++
++@pytest.mark.parametrize("amount", [0, -1, -0.01, None, "10", True])
++def test_bad_amount(amount):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++
++
++@pytest.mark.parametrize(
++    "kwargs",
++    [
++        {"customer_id": "nope", "amount": 10},
++        {"customer_id": None, "amount": 10},
++        {"customer_id": "CUST", "amount": 0},
++        {"customer_id": "CUST", "amount": MAX_VOUCHER_AMOUNT + 1},
++    ],
++)
++def test_rejected_call_leaves_store_and_outbox_unchanged(kwargs):
++    c = customers.add_customer("Acme")
++    if kwargs["customer_id"] == "CUST":
++        kwargs["customer_id"] = c.id
++    store_before = copy.deepcopy(store.db.vouchers)
++    outbox_before = copy.deepcopy(events.OU

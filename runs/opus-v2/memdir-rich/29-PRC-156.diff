@@ -1,0 +1,120 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:23:55
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- rates: add heavy_quote surcharge for parcels over 30 kg (PRC-156)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:23:55
+@@ -15,3 +15,4 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++- `rates.heavy_quote(weight_kg, zone)`: quote plus 0.75 per kg above 30 kg, as Money
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 03:23:55
+@@ -1,3 +1,9 @@
++from decimal import Decimal
++
++from parcelo import settings
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
+ 
+@@ -12,3 +18,21 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def heavy_quote(weight_kg, zone):
++    """Normal quote plus a surcharge per kg above the heavy threshold, as Money.
++
++    Unknown zone -> DomainError E_BAD_ZONE; non-positive or non-numeric weight -> E_BAD_WEIGHT.
++    """
++    if zone not in ZONE_BASE:
++        raise DomainError("E_BAD_ZONE", f"unknown zone {zone!r}")
++    if isinstance(weight_kg, bool) or not isinstance(weight_kg, (int, float, Decimal)):
++        raise DomainError("E_BAD_WEIGHT", f"weight must be a number, got {weight_kg!r}")
++    if weight_kg <= 0:
++        raise DomainError("E_BAD_WEIGHT", "weight must be positive")
++    price = Money.parse(quote(weight_kg, zone))
++    excess_kg = Decimal(str(weight_kg)) - Decimal(str(settings.HEAVY_THRESHOLD_KG))
++    if excess_kg > 0:
++        price = price + Money.parse(settings.HEAVY_PER_KG_SURCHARGE).scale(excess_kg)
++    return price
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:23:55
+@@ -0,0 +1,5 @@
++"""Business numbers that Finance/Sales may change. Import, don't copy."""
++
++# PRC-156: heavy parcel surcharge
++HEAVY_THRESHOLD_KG = 30
++HEAVY_PER_KG_SURCHARGE = "0.75"  # dollars per kg above HEAVY_THRESHOLD_KG
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_rates_heavy.py b/tests/unit/test_rates_heavy.py
+--- a/tests/unit/test_rates_heavy.py	1969-12-31 19:00:00
++++ b/tests/unit/test_rates_heavy.py	2026-11-12 03:24:02
+@@ -0,0 +1,53 @@
++import pytest
++
++from parcelo import events, rates, settings
++from parcelo.errors import DomainError
++from parcelo.money import Money
++
++
++def test_light_parcel_gets_normal_quote():
++    # 4.50 + 1.25 * 10
++    assert rates.heavy_quote(10, "local") == Money.parse("17.00")
++
++
++def test_exactly_threshold_has_no_surcharge():
++    w = settings.HEAVY_THRESHOLD_KG
++    assert rates.heavy_quote(w, "national") == Money.parse(rates.quote(w, "national"))
++    assert rates.heavy_quote(30, "national") == Money.parse("46.50")
++
++
++def test_heavy_parcel_adds_surcharge():
++    # 9.00 + 1.25 * 40 = 59.00, plus 0.75 * 10 = 7.50
++    assert rates.heavy_quote(40, "national") == Money.parse("66.50")
++
++
++def test_fractional_excess_is_prorated():
++    # 24.00 + 1.25 * 30.4 = 62.00, plus 0.75 * 0.4 = 0.30
++    assert rates.heavy_quote(30.4, "international") == Money.parse("62.30")
++
++
++def test_returns_money():
++    assert isinstance(rates.heavy_quote(31, "local"), Money)
++
++
++def test_surcharge_follows_settings(monkeypatch):
++    monkeypatch.setattr(settings, "HEAVY_PER_KG_SURCHARGE", "1.00")
++    monkeypatch.setattr(settings, "HEAVY_THRESHOLD_KG", 20)
++    # 4.50 + 1.25 * 25 = 35.75, plus 1.00 * 5
++    assert rates.heavy_quote(25, "local") == Money.parse("40.75")
++
++
++@pytest.mark.parametrize("zone", ["moon", "", None, "LOCAL"])
++def test_unknown_zone_fails(zone):
++    with pytest.raises(DomainError) as err:
++        rates.heavy_quote(40, zone)
++    assert err.value.code == "E_BAD_ZONE"
++    assert events.OUTBOX == []
++
++
++@pytest.mark.parametrize("weight", [0, -1, -40.5, None, "40", True])
++def test_bad_weight_fails(weight):
++    with pytest.raises(DomainError) as err:
++        rates.heavy_quote(weight, "local")
++    assert err.value.code == "E_BAD_WEIGHT"
++    assert events.OUTBOX == []

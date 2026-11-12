@@ -1,0 +1,158 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:30:22
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-161] customers: add rebate_for volume rebate
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:30:21
+@@ -6,6 +6,7 @@
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
++- `customers.rebate_for(customer_id)`: volume rebate earned (Money), a share of the customer's paid invoices by shipment count
+ 
+ ## shipments
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:30:08
+@@ -1,8 +1,13 @@
+ import uuid
+ 
++from parcelo import settings
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
++from parcelo.money import Money
+ from parcelo.store import db
+ 
++REBATE_INVOICE_STATUSES = ("paid",)
++
+ TIERS = ("standard", "gold")
+ 
+ 
+@@ -27,3 +32,31 @@
+         if shipment.customer_id == customer_id and invoice.status == "open":
+             total += invoice.amount
+     return round(total, 2)
++
++
++def _rebate_rate(shipment_count):
++    if shipment_count >= settings.REBATE_BULK_MIN_SHIPMENTS:
++        return settings.REBATE_BULK_RATE
++    if shipment_count >= settings.REBATE_REGULAR_MIN_SHIPMENTS:
++        return settings.REBATE_REGULAR_RATE
++    return None
++
++
++def rebate_for(customer_id):
++    """Volume rebate the customer has earned, as Money.
++
++    A share of the total of the customer's paid invoices, chosen by how many
++    shipments the customer has (all statuses). Zero below the lowest cut-off.
++    Raises DomainError E_NOT_FOUND for an unknown customer.
++    """
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    shipment_ids = {s.id for s in db.shipments.values() if s.customer_id == customer_id}
++    rate = _rebate_rate(len(shipment_ids))
++    if rate is None:
++        return Money.zero()
++    paid_total = Money.zero()
++    for invoice in db.invoices.values():
++        if invoice.shipment_id in shipment_ids and invoice.status in REBATE_INVOICE_STATUSES:
++            paid_total = paid_total + Money.parse(invoice.amount)
++    return paid_total.scale(rate)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:30:02
+@@ -0,0 +1,8 @@
++"""Business numbers that Finance may change. Import these; don't copy them."""
++from decimal import Decimal
++
++# Volume rebate (PRC-161). Shipment-count cut-offs match the old billing volume tiers.
++REBATE_REGULAR_MIN_SHIPMENTS = 10
++REBATE_BULK_MIN_SHIPMENTS = 50
++REBATE_REGULAR_RATE = Decimal("0.03")
++REBATE_BULK_RATE = Decimal("0.06")
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers_rebate.py b/tests/unit/test_customers_rebate.py
+--- a/tests/unit/test_customers_rebate.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers_rebate.py	2026-11-12 03:30:28
+@@ -0,0 +1,84 @@
++import pytest
++
++from parcelo import customers, events, invoices, settings, shipments
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def _seed(customer, n_shipments, paid_amounts=(), open_amounts=()):
++    created = [shipments.create_shipment(customer.id, 1, "local") for _ in range(n_shipments)]
++    amounts = [(a, "paid") for a in paid_amounts] + [(a, "open") for a in open_amounts]
++    for shipment, (amount, status) in zip(created, amounts):
++        inv = invoices.issue_invoice(shipment.id)
++        inv.amount = amount
++        inv.status = status
++    return created
++
++
++def test_below_regular_cutoff_is_zero():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_REGULAR_MIN_SHIPMENTS - 1, paid_amounts=[100.0])
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_no_shipments_is_zero():
++    c = customers.add_customer("Acme")
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_regular_rate_at_cutoff_counts_only_paid():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_REGULAR_MIN_SHIPMENTS,
++          paid_amounts=[100.0, 50.5], open_amounts=[1000.0])
++    # 3% of 150.50
++    assert customers.rebate_for(c.id) == Money.parse("4.52")
++
++
++def test_just_below_bulk_is_regular():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_BULK_MIN_SHIPMENTS - 1, paid_amounts=[200.0])
++    assert customers.rebate_for(c.id) == Money.parse("6.00")
++
++
++def test_bulk_rate_at_cutoff():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_BULK_MIN_SHIPMENTS, paid_amounts=[200.0, 100.0])
++    assert customers.rebate_for(c.id) == Money.parse("18.00")
++
++
++def test_other_customers_invoices_and_shipments_ignored():
++    a = customers.add_customer("A")
++    b = customers.add_customer("B")
++    _seed(a, settings.REBATE_REGULAR_MIN_SHIPMENTS, paid_amounts=[100.0])
++    _seed(b, settings.REBATE_BULK_MIN_SHIPMENTS, paid_amounts=[999.0])
++    assert customers.rebate_for(a.id) == Money.parse("3.00")
++
++
++def test_tier_without_paid_invoices_is_zero():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_REGULAR_MIN_SHIPMENTS, open_amounts=[100.0])
++    assert customers.rebate_for(c.id) == Money.zero()
++
++
++def test_returns_money():
++    c = customers.add_customer("Acme")
++    _seed(c, settings.REBATE_REGULAR_MIN_SHIPMENTS, paid_amounts=[10.0])
++    assert isinstance(customers.rebate_for(c.id), Money)
++
++
++def test_unknown_customer_fails():
++    events.OUTBOX

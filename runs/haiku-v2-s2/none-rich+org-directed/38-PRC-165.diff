@@ -1,0 +1,56 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:16:34
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: add shipments_without_invoice
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:16:31
+@@ -1,6 +1,17 @@
+ from datetime import datetime
+ 
++from parcelo.models import Shipment
+ from parcelo.store import db
++
++
++def shipments_without_invoice() -> list[Shipment]:
++    """Return the shipments that no invoice refers to.
++
++    Returns:
++        A list of Shipment objects whose id is not the shipment_id of any invoice.
++    """
++    invoiced = {invoice.shipment_id for invoice in db.invoices.values()}
++    return [s for s in db.shipments.values() if s.id not in invoiced]
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 03:16:34
+@@ -0,0 +1,20 @@
++from parcelo import customers, invoices, reports, shipments
++
++
++def test_shipments_without_invoice():
++    c = customers.add_customer("Acme")
++    billed = shipments.create_shipment(c.id, 2, "local")
++    unbilled = shipments.create_shipment(c.id, 3, "national")
++    invoices.issue_invoice(billed.id)
++
++    result = reports.shipments_without_invoice()
++
++    assert [s.id for s in result] == [unbilled.id]
++
++
++def test_shipments_without_invoice_none_when_all_billed():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    invoices.issue_invoice(s.id)
++
++    assert reports.shipments_without_invoice() == []

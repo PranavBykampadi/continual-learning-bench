@@ -1,0 +1,99 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:04:54
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- reports: add per-customer volume report (PRC-147)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:04:49
+@@ -1,6 +1,42 @@
+ from datetime import datetime
+ 
++from parcelo import settings
+ from parcelo.store import db
++
++
++def _volume_tier(shipment_count: int) -> str:
++    """Map a shipment count to a volume tier label.
++
++    Args:
++        shipment_count: Number of shipments the customer has.
++
++    Returns:
++        "bulk", "regular", or "starter".
++    """
++    if shipment_count >= settings.VOLUME_TIER_BULK_MIN:
++        return "bulk"
++    if shipment_count >= settings.VOLUME_TIER_REGULAR_MIN:
++        return "regular"
++    return "starter"
++
++
++def volume_report() -> dict[str, dict[str, object]]:
++    """Report shipment volume and tier for every customer.
++
++    Customers with no shipments are included with a count of zero.
++
++    Returns:
++        Dict keyed by customer id, with values like
++        {"shipments": <count>, "tier": <label>}.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": _volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:04:47
+@@ -0,0 +1,7 @@
++"""Business thresholds and rates. Functions import these; don't inline the numbers."""
++
++# Customer volume tiers, by number of shipments. A customer with at least
++# VOLUME_TIER_BULK_MIN shipments is "bulk", at least VOLUME_TIER_REGULAR_MIN
++# is "regular", otherwise "starter". Same thresholds as legacy/billing.py.
++VOLUME_TIER_BULK_MIN = 50
++VOLUME_TIER_REGULAR_MIN = 10
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_reports.py b/tests/test_reports.py
+--- a/tests/test_reports.py	1969-12-31 19:00:00
++++ b/tests/test_reports.py	2026-11-12 03:04:53
+@@ -0,0 +1,27 @@
++from parcelo import customers, reports, shipments
++
++
++def _ship(customer_id, n):
++    for _ in range(n):
++        shipments.create_shipment(customer_id, 1, "local")
++
++
++def test_volume_report_includes_customers_without_shipments():
++    c = customers.add_customer("Acme")
++    assert reports.volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_volume_report_counts_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    _ship(a.id, 3)
++    _ship(b.id, 1)
++    report = reports.volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++def test_volume_tier_boundaries():
++    cases = {9: "starter", 10: "regular", 49: "regular", 50: "bulk"}
++    for count, tier in cases.items():
++        assert reports._volume_tier(count) == tier, count

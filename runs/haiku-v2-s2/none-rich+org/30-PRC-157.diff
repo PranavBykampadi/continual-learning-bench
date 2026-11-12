@@ -1,0 +1,75 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:02:47
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- invoices: put open invoice on hold (PRC-157)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/invoices.py b/parcelo/invoices.py
+--- a/parcelo/invoices.py	2026-11-10 12:17:53
++++ b/parcelo/invoices.py	2026-11-12 03:02:45
+@@ -30,5 +30,16 @@
+     return invoice
+ 
+ 
++def hold_invoice(invoice_id):
++    if invoice_id not in db.invoices:
++        raise KeyError(invoice_id)
++    invoice = db.invoices[invoice_id]
++    if invoice.status != "open":
++        raise ValueError("only open invoices can be put on hold")
++    invoice.status = "on_hold"
++    invoice.held_at = datetime.now()
++    return invoice
++
++
+ def open_invoices():
+     return [i for i in db.invoices.values() if i.status == "open"]
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:02:44
+@@ -30,3 +30,4 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++    held_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_invoices.py b/tests/test_invoices.py
+--- a/tests/test_invoices.py	2026-11-10 12:17:53
++++ b/tests/test_invoices.py	2026-11-12 03:02:49
+@@ -1,3 +1,5 @@
++import pytest
++
+ from parcelo import customers, invoices, shipments
+ 
+ 
+@@ -7,3 +9,26 @@
+     inv = invoices.issue_invoice(s.id)
+     assert inv.amount == 7.0
+     assert invoices.mark_paid(inv.id).status == "paid"
++
++
++def test_hold_open_invoice():
++    c = customers.add_customer("Hold Co")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    held = invoices.hold_invoice(inv.id)
++    assert held.status == "on_hold"
++    assert held.held_at is not None
++
++
++def test_hold_non_open_invoice_fails():
++    c = customers.add_customer("Paid Co")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    with pytest.raises(ValueError):
++        invoices.hold_invoice(inv.id)
++
++
++def test_hold_missing_invoice_fails():
++    with pytest.raises(KeyError):
++        invoices.hold_invoice("INV-missing")

@@ -1,0 +1,139 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 03:01:03
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- reports: add invoice aging report (PRC-114)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:01:02
+@@ -1,6 +1,41 @@
+-from datetime import datetime
++from datetime import datetime, timezone
+ 
++from parcelo import clock
++from parcelo.legacy.billing import days_between
++from parcelo.money import Money
+ from parcelo.store import db
++
++
++def _as_utc(moment):
++    """Return an aware UTC datetime, reading naive values as UTC."""
++    if moment.tzinfo is None:
++        return moment.replace(tzinfo=timezone.utc)
++    return moment.astimezone(timezone.utc)
++
++
++def aging_report() -> dict[str, Money]:
++    """Total the open invoices by age in whole days since they were issued.
++
++    Paid and void invoices are left out.
++
++    Returns:
++        A dict with the keys "0-30", "31-60" and "60+", each mapped to the
++        Money total of the open invoices in that bucket. Empty buckets are zero.
++    """
++    now = clock.now()
++    buckets = {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++    for invoice in db.invoices.values():
++        if invoice.status != "open":
++            continue
++        age = days_between(_as_utc(invoice.issued_at), now)
++        if age <= 30:
++            key = "0-30"
++        elif age <= 60:
++            key = "31-60"
++        else:
++            key = "60+"
++        buckets[key] = buckets[key] + Money.parse(invoice.amount)
++    return buckets
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports_aging.py b/tests/unit/test_reports_aging.py
+--- a/tests/unit/test_reports_aging.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports_aging.py	2026-11-12 03:01:08
+@@ -0,0 +1,78 @@
++from datetime import datetime, timedelta, timezone
++
++from parcelo import audit, clock, reports, store
++from parcelo.models import Invoice
++from parcelo.money import Money
++
++NOW = datetime(2026, 11, 12, 12, 0, tzinfo=timezone.utc)
++
++
++def _invoice(invoice_id, amount, days_old, status="open"):
++    issued = NOW - timedelta(days=days_old)
++    store.db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id="shp_x",
++        amount=amount,
++        status=status,
++        issued_at=issued.replace(tzinfo=None),  # naive UTC, as issue_invoice stores it
++    )
++
++
++def setup_function():
++    clock.set_fixed(NOW)
++
++
++def test_empty_report_is_all_zero():
++    report = reports.aging_report()
++    assert report == {"0-30": Money.zero(), "31-60": Money.zero(), "60+": Money.zero()}
++
++
++def test_buckets_and_edges():
++    _invoice("a", 1.0, 0)
++    _invoice("b", 2.0, 30)
++    _invoice("c", 4.0, 31)
++    _invoice("d", 8.0, 60)
++    _invoice("e", 16.0, 61)
++    report = reports.aging_report()
++    assert report["0-30"].cents == 300
++    assert report["31-60"].cents == 1200
++    assert report["60+"].cents == 1600
++
++
++def test_partial_day_counts_as_whole_days():
++    # 30 days and 23 hours old is still 30 whole days, so it's in 0-30.
++    store.db.invoices["x"] = Invoice(
++        id="x",
++        shipment_id="shp_x",
++        amount=5.0,
++        status="open",
++        issued_at=(NOW - timedelta(days=30, hours=23)).replace(tzinfo=None),
++    )
++    assert reports.aging_report()["0-30"].cents == 500
++
++
++def test_paid_and_void_invoices_are_left_out():
++    _invoice("paid", 10.0, 5, status="paid")
++    _invoice("void", 20.0, 90, status="void")
++    _invoice("open", 3.0, 90)
++    report = reports.aging_report()
++    assert report["0-30"] == Money.zero()
++    assert report["60+"].cents == 300
++
++
++def test_aware_issued_at_is_accepted():
++    store.db.invoices["z"] = Invoice(
++        id="z",
++        shipment_id="shp_x",
++        amount=7.0,
++        status="open",
++        issued_at=NOW - timedelta(days=40),
++    )
++    assert reports.aging_report()["31-60"].cents == 700
++
++
++def test_read_only_does_not_audit():
++    _invoice("a", 1.0, 10)
++    before = len(audit.LOG)
++    reports.aging_report()
++    assert len(audit.LOG) == before

@@ -1,0 +1,173 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:17:54
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-164] vouchers: issue goodwill vouchers for customers, capped at 150.00
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:17:54
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## vouchers
++
++- `vouchers.issue_voucher(customer_id, amount)`: issue a goodwill voucher (max 150.00) to an existing customer
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/models.py b/parcelo/models.py
+--- a/parcelo/models.py	2026-11-10 12:17:53
++++ b/parcelo/models.py	2026-11-12 03:17:46
+@@ -30,3 +30,11 @@
+     status: str = "open"
+     issued_at: object = None
+     paid_at: object = None
++
++
++@dataclass
++class Voucher:
++    id: str
++    customer_id: str
++    amount: object  # parcelo.money.Money
++    issued_at: object = None
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/settings.py b/parcelo/settings.py
+--- a/parcelo/settings.py	1969-12-31 19:00:00
++++ b/parcelo/settings.py	2026-11-12 03:17:45
+@@ -0,0 +1,4 @@
++"""Business thresholds, limits and rates used by new code."""
++
++# Largest goodwill voucher that can be issued, in cents (150.00).
++MAX_VOUCHER_CENTS = 15000
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/store.py b/parcelo/store.py
+--- a/parcelo/store.py	2026-11-10 12:17:53
++++ b/parcelo/store.py	2026-11-12 03:17:46
+@@ -3,6 +3,7 @@
+         self.customers = {}
+         self.shipments = {}
+         self.invoices = {}
++        self.vouchers = {}
+ 
+ 
+ db = Store()
+@@ -12,3 +13,4 @@
+     db.customers.clear()
+     db.shipments.clear()
+     db.invoices.clear()
++    db.vouchers.clear()
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/vouchers.py b/parcelo/vouchers.py
+--- a/parcelo/vouchers.py	1969-12-31 19:00:00
++++ b/parcelo/vouchers.py	2026-11-12 03:17:48
+@@ -0,0 +1,31 @@
++from decimal import InvalidOperation
++
++from parcelo import clock, events, ids
++from parcelo.errors import DomainError
++from parcelo.models import Voucher
++from parcelo.money import Money
++from parcelo.settings import MAX_VOUCHER_CENTS
++from parcelo.store import db
++
++
++def issue_voucher(customer_id, amount):
++    """Issue a goodwill voucher for an existing customer; amount is in dollars or Money."""
++    if customer_id not in db.customers:
++        raise DomainError("E_UNKNOWN_CUSTOMER", customer_id)
++    try:
++        value = Money.parse(amount)
++    except (InvalidOperation, TypeError, ValueError):
++        raise DomainError("E_BAD_INPUT", f"amount {amount!r}")
++    if value.cents <= 0:
++        raise DomainError("E_BAD_INPUT", f"amount must be positive, got {value}")
++    if value.cents > MAX_VOUCHER_CENTS:
++        raise DomainError("E_LIMIT", f"voucher amount {value} exceeds the maximum")
++    voucher = Voucher(
++        id=ids.new_id("vch"),
++        customer_id=customer_id,
++        amount=value,
++        issued_at=clock.now(),
++    )
++    db.vouchers[voucher.id] = voucher
++    events.emit("voucher.issued", voucher.id, customer_id=customer_id, cents=value.cents)
++    return voucher
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_vouchers.py b/tests/unit/test_vouchers.py
+--- a/tests/unit/test_vouchers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_vouchers.py	2026-11-12 03:17:51
+@@ -0,0 +1,74 @@
++import pytest
++
++from parcelo import customers, events, vouchers
++from parcelo.errors import DomainError
++from parcelo.money import Money
++from parcelo.store import db
++
++
++def test_issue_voucher_saves_and_returns_voucher():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, "25.00")
++    assert v.id.startswith("vch_")
++    assert v.customer_id == c.id
++    assert v.amount == Money(2500)
++    assert v.issued_at is not None
++    assert db.vouchers[v.id] is v
++
++
++def test_issue_voucher_accepts_money_and_float():
++    c = customers.add_customer("Acme")
++    assert vouchers.issue_voucher(c.id, Money(1000)).amount == Money(1000)
++    assert vouchers.issue_voucher(c.id, 12.5).amount == Money(1250)
++
++
++def test_issue_voucher_stores_money_not_float():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, 10.10)
++    assert isinstance(v.amount, Money)
++    assert v.amount.cents == 1010
++
++
++def test_issue_voucher_at_maximum_is_allowed():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, "150.00")
++    assert v.amount == Money(15000)
++
++
++def test_issue_voucher_emits_event():
++    c = customers.add_customer("Acme")
++    v = vouchers.issue_voucher(c.id, 5)
++    assert events.OUTBOX[-1]["name"] == "voucher.issued"
++    assert events.OUTBOX[-1]["entity_id"] == v.id
++
++
++def test_unknown_customer_rejected():
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher("nope", 5)
++    assert err.value.code == "E_UNKNOWN_CUSTOMER"
++    assert db.vouchers == {}
++
++
++@pytest.mark.parametrize("amount", ["150.01", 200, "1000"])
++def test_over_limit_rejected(amount):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher(c.id, amount)
++    assert err.value.code == "E_LIMIT"
++    assert db.vouchers == {}
++
++
++@pytest.mark.parametrize("amount", [0, "0.00", -1, -0.01])
++def test_zero_or_negative_rejected(amount):
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        vouchers.issue_voucher(c.id, amount)
++    assert err.value.code == "E_BAD_INPUT"
++    assert db.vouchers == {}
++
++
++def test_unparseable_amount_rejected():
++    c = customers.add_customer("Acme")
++    with pytest.raises(DomainError) as err:
++        voucher

@@ -1,0 +1,66 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:17:53
++++ b/CHANGELOG.md	2026-11-12 02:56:21
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - Added gold tier
++- rates: add `discounted_quote` with 10% off for gold tier (PRC-110)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 02:56:16
+@@ -1,5 +1,6 @@
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++TIER_DISCOUNT_PCT = {"standard": 0.0, "gold": 10.0}
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +13,12 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def discounted_quote(weight_kg, zone, tier):
++    if tier not in TIER_DISCOUNT_PCT:
++        raise ValueError("unknown tier: %s" % tier)
++    amount = quote(weight_kg, zone)
++    # Same percentage math as legacy billing.apply_discount.
++    pct = TIER_DISCOUNT_PCT[tier]
++    return round(amount * (1 - pct / 100.0), 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 02:56:20
+@@ -10,3 +10,28 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_discounted_quote_standard_is_regular_quote():
++    assert rates.discounted_quote(2, "local", "standard") == rates.quote(2, "local")
++
++
++def test_discounted_quote_gold_takes_10_percent_off():
++    # quote(2, "local") == 7.0 -> 10% off == 6.3
++    assert rates.discounted_quote(2, "local", "gold") == 6.3
++
++
++def test_discounted_quote_gold_rounds_to_cents():
++    # quote(3, "national") == 12.75; check the 10% cut is rounded to cents.
++    expected = round(rates.quote(3, "national") * 0.9, 2)
++    assert rates.discounted_quote(3, "national", "gold") == expected
++
++
++def test_discounted_quote_unknown_tier():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "local", "platinum")
++
++
++def test_discounted_quote_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.discounted_quote(2, "moon", "gold")

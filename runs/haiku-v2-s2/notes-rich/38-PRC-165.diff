@@ -1,0 +1,87 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:15:23
+@@ -2,6 +2,7 @@
+ 
+ ## Unreleased
+ 
++- [PRC-165] reports: list shipments without an invoice
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:15:23
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments that no invoice refers to, in creation order; returns a list of `Shipment`; raises no errors; emits no events; idempotent (read-only)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:15:19
+@@ -14,6 +14,11 @@
+     return counts
+ 
+ 
++def shipments_without_invoice():
++    invoiced = {invoice.shipment_id for invoice in db.invoices.values()}
++    return [shipment for shipment in db.shipments.values() if shipment.id not in invoiced]
++
++
+ def daily_summary():
+     summary = {
+         "generated_at": datetime.now(),
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 03:15:21
+@@ -0,0 +1,46 @@
++from parcelo import customers, events, invoices, reports, shipments
++
++
++def test_no_shipments_returns_empty_list():
++    assert reports.shipments_without_invoice() == []
++
++
++def test_shipment_without_invoice_is_listed():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    assert reports.shipments_without_invoice() == [s]
++
++
++def test_invoiced_shipment_is_excluded():
++    c = customers.add_customer("Acme")
++    invoiced = shipments.create_shipment(c.id, 2, "local")
++    bare = shipments.create_shipment(c.id, 3, "national")
++    invoices.issue_invoice(invoiced.id)
++    assert reports.shipments_without_invoice() == [bare]
++
++
++def test_list_is_in_creation_order():
++    c = customers.add_customer("Acme")
++    first = shipments.create_shipment(c.id, 1, "local")
++    second = shipments.create_shipment(c.id, 2, "local")
++    third = shipments.create_shipment(c.id, 3, "local")
++    invoices.issue_invoice(second.id)
++    assert reports.shipments_without_invoice() == [first, third]
++
++
++def test_paid_invoice_still_counts_as_invoiced():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    inv = invoices.issue_invoice(s.id)
++    invoices.mark_paid(inv.id)
++    assert reports.shipments_without_invoice() == []
++
++
++def test_is_read_only_and_idempotent():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2, "local")
++    events.OUTBOX.clear()
++    first = reports.shipments_without_invoice()
++    second = reports.shipments_without_invoice()
++    assert first == second == [s]
++    assert events.OUTBOX == []

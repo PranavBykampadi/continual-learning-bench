@@ -1,0 +1,83 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:58:42
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: add `set_credit_limit` (PRC-150)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:58:42
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.set_credit_limit(customer_id, amount)`: set a customer's credit limit and return it; raises `E_NOT_FOUND` for an unknown customer and `E_BAD_INPUT` for a negative amount
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:58:41
+@@ -1,5 +1,6 @@
+ import uuid
+ 
++from parcelo.errors import DomainError
+ from parcelo.models import Customer
+ from parcelo.store import db
+ 
+@@ -18,6 +19,16 @@
+ 
+ def get_customer(customer_id):
+     return db.customers[customer_id]
++
++
++def set_credit_limit(customer_id, amount):
++    if customer_id not in db.customers:
++        raise DomainError("E_NOT_FOUND", customer_id)
++    if amount < 0:
++        raise DomainError("E_BAD_INPUT", "credit limit must not be negative")
++    customer = db.customers[customer_id]
++    customer.credit_limit = amount
++    return customer.credit_limit
+ 
+ 
+ def outstanding_balance(customer_id):
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:58:45
+@@ -0,0 +1,30 @@
++import pytest
++
++from parcelo import customers
++from parcelo.errors import DomainError
++
++
++def test_set_credit_limit_updates_and_returns_new_limit():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 1200) == 1200
++    assert customers.get_customer(c.id).credit_limit == 1200
++
++
++def test_set_credit_limit_zero_is_allowed():
++    c = customers.add_customer("Acme")
++    assert customers.set_credit_limit(c.id, 0) == 0
++
++
++def test_set_credit_limit_unknown_customer():
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit("nope", 100)
++    assert err.value.code == "E_NOT_FOUND"
++
++
++def test_set_credit_limit_negative_fails_and_keeps_old_limit():
++    c = customers.add_customer("Acme")
++    before = c.credit_limit
++    with pytest.raises(DomainError) as err:
++        customers.set_credit_limit(c.id, -1)
++    assert err.value.code == "E_BAD_INPUT"
++    assert customers.get_customer(c.id).credit_limit == before

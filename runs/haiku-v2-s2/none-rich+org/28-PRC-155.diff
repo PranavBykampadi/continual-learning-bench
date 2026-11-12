@@ -1,0 +1,16 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 03:01:54
+@@ -20,6 +20,12 @@
+     return db.customers[customer_id]
+ 
+ 
++def customers_by_tier(tier):
++    if tier not in TIERS:
++        raise ValueError("bad tier")
++    return [c for c in db.customers.values() if c.tier == tier]
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():

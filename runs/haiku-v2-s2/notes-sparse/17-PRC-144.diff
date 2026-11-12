@@ -1,0 +1,86 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/rates.py b/parcelo/rates.py
+--- a/parcelo/rates.py	2026-11-10 12:17:53
++++ b/parcelo/rates.py	2026-11-12 03:02:48
+@@ -1,5 +1,11 @@
++import math
++
++from parcelo.legacy.billing import fuel_surcharge
++
+ ZONE_BASE = {"local": 4.5, "national": 9.0, "international": 24.0}
+ PER_KG = 1.25
++INSURANCE_RATE = 0.02
++INSURANCE_MIN_FEE = 1.00
+ 
+ 
+ def base_rate(zone):
+@@ -12,3 +18,21 @@
+     if weight_kg <= 0:
+         raise ValueError("weight must be positive")
+     return round(base_rate(zone) + PER_KG * weight_kg, 2)
++
++
++def insurance_fee(declared_value, zone):
++    """2% of the declared value plus the zone's fuel surcharge on that value.
++
++    The fuel surcharge percentages come from parcelo.legacy.billing.fuel_surcharge,
++    so they are not duplicated here. The fee never drops below INSURANCE_MIN_FEE.
++    """
++    if isinstance(declared_value, bool) or not isinstance(declared_value, (int, float)):
++        raise ValueError("declared value must be a number")
++    if not math.isfinite(declared_value):
++        raise ValueError("declared value must be finite")
++    if declared_value <= 0:
++        raise ValueError("declared value must be positive")
++    if zone not in ZONE_BASE:
++        raise ValueError("unknown zone: %s" % zone)
++    raw = INSURANCE_RATE * declared_value + fuel_surcharge(declared_value, zone)
++    return round(max(INSURANCE_MIN_FEE, raw), 2)
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/test_rates.py b/tests/test_rates.py
+--- a/tests/test_rates.py	2026-11-10 12:17:53
++++ b/tests/test_rates.py	2026-11-12 03:02:51
+@@ -10,3 +10,45 @@
+ def test_unknown_zone():
+     with pytest.raises(ValueError):
+         rates.base_rate("moon")
++
++
++def test_insurance_fee_local_no_surcharge():
++    assert rates.insurance_fee(100, "local") == 2.00
++
++
++def test_insurance_fee_national_adds_surcharge():
++    # 2% of 100 = 2.00, plus 4% fuel surcharge of 100 = 4.00
++    assert rates.insurance_fee(100, "national") == 6.00
++
++
++def test_insurance_fee_international_adds_surcharge():
++    # 2% of 100 = 2.00, plus 9.5% fuel surcharge of 100 = 9.50
++    assert rates.insurance_fee(100, "international") == 11.50
++
++
++def test_insurance_fee_minimum():
++    # 2% of 10 = 0.20, below the 1.00 minimum
++    assert rates.insurance_fee(10, "local") == 1.00
++    assert rates.insurance_fee(10, "national") == 1.00
++
++
++def test_insurance_fee_float_value():
++    # 2% of 250.50 = 5.01, fuel 4% = 10.02; total 15.03
++    assert rates.insurance_fee(250.50, "national") == 15.03
++
++
++def test_insurance_fee_unknown_zone():
++    with pytest.raises(ValueError):
++        rates.insurance_fee(100, "moon")
++
++
++@pytest.mark.parametrize("value", [0, -5, -0.01])
++def test_insurance_fee_rejects_non_positive(value):
++    with pytest.raises(ValueError):
++        rates.insurance_fee(value, "local")
++
++
++@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), True, "100", None])
++def test_insurance_fee_rejects_non_numeric_or_non_finite(value):
++    with pytest.raises(ValueError):
++        rates.insurance_fee(value, "local")

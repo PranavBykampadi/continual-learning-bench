@@ -1,50 +1,80 @@
 [
   {
     "id": "escalate",
-    "snapshots": ["a"],
+    "snapshots": [
+      "a"
+    ],
     "rule": "A refund of more than $75 is never issued directly. Escalate the case to `billing-review` with `desk.py escalate` instead. Refunds of $75 or less are issued directly.",
-    "review_comment": "This refund is over $75 and was paid out directly. Refunds above $75 are not ours to approve. Escalate the case to the `billing-review` team (`desk.py escalate <case> billing-review`) and do not run `refund` on it."
+    "review_comment": "This refund is over $75 and was paid out directly. Refunds above $75 are not ours to approve. Escalate the case to the `billing-review` team (`desk.py escalate <case> billing-review`) and do not run `refund` on it.",
+    "hidden": true
   },
   {
     "id": "escalate_finance",
-    "snapshots": ["b"],
+    "snapshots": [
+      "b"
+    ],
     "rule": "A refund of more than $40 is never issued directly. Escalate the case to `finance-ops` with `desk.py escalate` instead. Refunds of $40 or less are issued directly. `billing-review` no longer handles refunds.",
-    "review_comment": "Refunds above $40 now go to `finance-ops`, not to `billing-review`, and we no longer pay them out directly. Escalate this case with `desk.py escalate <case> finance-ops` and do not run `refund` on it."
+    "review_comment": "Refunds above $40 now go to `finance-ops`, not to `billing-review`, and we no longer pay them out directly. Escalate this case with `desk.py escalate <case> finance-ops` and do not run `refund` on it.",
+    "hidden": true
   },
   {
     "id": "tag",
-    "snapshots": ["a", "b"],
+    "snapshots": [
+      "a",
+      "b"
+    ],
     "rule": "Every case gets exactly one category tag before it is closed, and the tag is one of: billing, shipping, product, account, other.",
-    "review_comment": "Every case needs exactly one category tag before closing, and it has to be one of billing, shipping, product, account or other. Reporting breaks on any other label and on cases with two tags or none."
+    "review_comment": "Every case needs exactly one category tag before closing, and it has to be one of billing, shipping, product, account or other. Reporting breaks on any other label and on cases with two tags or none.",
+    "hidden": true
   },
   {
     "id": "no_dates",
-    "snapshots": ["a", "b"],
+    "snapshots": [
+      "a",
+      "b"
+    ],
     "rule": "Replies never tell a customer when a parcel will arrive: no delivery date, weekday, or number of days. Point them to the tracking number instead.",
-    "review_comment": "Please don't promise a delivery date or a number of days for when a parcel will arrive, carriers move those and we end up owning the miss. Give the tracking number and say the carrier has the latest."
+    "review_comment": "Please don't promise a delivery date or a number of days for when a parcel will arrive, carriers move those and we end up owning the miss. Give the tracking number and say the carrier has the latest.",
+    "hidden": true
   },
   {
     "id": "signoff",
-    "snapshots": ["a", "b"],
+    "snapshots": [
+      "a",
+      "b"
+    ],
     "rule": "Every reply ends with the sign-off \"Warmly,\" on its own line followed by \"The Marlowe & Pine Crew\" on the last line.",
-    "review_comment": "Replies have to end with our standard sign-off: `Warmly,` on one line, then `The Marlowe & Pine Crew` on the last line. No personal names or other closings."
+    "review_comment": "Replies have to end with our standard sign-off: `Warmly,` on one line, then `The Marlowe & Pine Crew` on the last line. No personal names or other closings.",
+    "hidden": true
   },
   {
     "id": "credit_cap",
-    "snapshots": ["a", "b"],
+    "snapshots": [
+      "a",
+      "b"
+    ],
     "rule": "Goodwill store credit is capped at $15 per case in total, whatever the customer asks for.",
-    "review_comment": "Goodwill credit is capped at $15 per case. This case got more than that. Cap it at $15 even when the customer asks for more."
+    "review_comment": "Goodwill credit is capped at $15 per case. This case got more than that. Cap it at $15 even when the customer asks for more.",
+    "hidden": false
   },
   {
     "id": "identity",
-    "snapshots": ["a", "b"],
+    "snapshots": [
+      "a",
+      "b"
+    ],
     "rule": "Before changing an account email, run `desk.py verify` successfully for that customer on the case. Never run `set-email` first.",
-    "review_comment": "The account email was changed without an identity check. Run `desk.py verify <case> <customer> <order>` (and have it confirm) before any `set-email`."
+    "review_comment": "The account email was changed without an identity check. Run `desk.py verify <case> <customer> <order>` (and have it confirm) before any `set-email`.",
+    "hidden": false
   },
   {
     "id": "greeting",
-    "snapshots": ["a", "b"],
-    "rule": "When the customer's `locale` is not English, the reply opens with a greeting in the customer's language (es: Hola, fr: Bonjour, de: Hallo, pt: Olá), even if the rest of the reply is in English.",
-    "review_comment": "This customer's account locale is not English. Replies to non-English locales open with a greeting in their language (Hola, Bonjour, Hallo, Olá) as the first line."
+    "snapshots": [
+      "a",
+      "b"
+    ],
+    "rule": "When the customer's `locale` is not English, the reply opens with a greeting in the customer's language (es: Hola, fr: Bonjour, de: Hallo, pt: Ol\u00e1), even if the rest of the reply is in English.",
+    "review_comment": "This customer's account locale is not English. Replies to non-English locales open with a greeting in their language (Hola, Bonjour, Hallo, Ol\u00e1) as the first line.",
+    "hidden": false
   }
 ]

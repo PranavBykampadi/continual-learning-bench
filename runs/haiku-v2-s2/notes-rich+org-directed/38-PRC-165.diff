@@ -1,0 +1,93 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-12 01:26:27
++++ b/CHANGELOG.md	2026-11-12 03:24:18
+@@ -6,6 +6,7 @@
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
+ - [PRC-171] platform: release notes script reads the new bullet format
++- [PRC-165] reports: list shipments without an invoice
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:24:19
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.shipments_without_invoice()`: shipments that no invoice refers to
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:24:17
+@@ -1,6 +1,17 @@
+ from datetime import datetime
+ 
++from parcelo.models import Shipment
+ from parcelo.store import db
++
++
++def shipments_without_invoice() -> list[Shipment]:
++    """Return the shipments that no invoice refers to.
++
++    Returns:
++        Shipments with no invoice, in the order they were stored.
++    """
++    invoiced = {invoice.shipment_id for invoice in db.invoices.values()}
++    return [shipment for shipment in db.shipments.values() if shipment.id not in invoiced]
+ 
+ 
+ def revenue_total():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_reports.py b/tests/unit/test_reports.py
+--- a/tests/unit/test_reports.py	1969-12-31 19:00:00
++++ b/tests/unit/test_reports.py	2026-11-12 03:24:23
+@@ -0,0 +1,46 @@
++from parcelo import customers, events, shipments
++from parcelo.models import Invoice
++from parcelo.reports import shipments_without_invoice
++from parcelo.store import db
++
++
++def _invoice(invoice_id, shipment_id, status="open"):
++    db.invoices[invoice_id] = Invoice(
++        id=invoice_id,
++        shipment_id=shipment_id,
++        amount=10.0,
++        status=status,
++    )
++
++
++def test_returns_only_shipments_without_invoice():
++    c = customers.add_customer("Acme")
++    billed = shipments.create_shipment(c.id, 1.5, "national")
++    unbilled = shipments.create_shipment(c.id, 2.0, "local")
++    _invoice("INV-1", billed.id)
++
++    result = shipments_without_invoice()
++
++    assert [s.id for s in result] == [unbilled.id]
++
++
++def test_paid_invoice_counts_as_invoice():
++    c = customers.add_customer("Acme")
++    billed = shipments.create_shipment(c.id, 1.5, "national")
++    _invoice("INV-1", billed.id, status="paid")
++
++    assert shipments_without_invoice() == []
++
++
++def test_no_shipments_returns_empty_list():
++    assert shipments_without_invoice() == []
++
++
++def test_read_only_emits_nothing():
++    c = customers.add_customer("Acme")
++    shipments.create_shipment(c.id, 1.5, "national")
++    events_before = list(events.OUTBOX)
++
++    shipments_without_invoice()
++
++    assert events.OUTBOX == events_before

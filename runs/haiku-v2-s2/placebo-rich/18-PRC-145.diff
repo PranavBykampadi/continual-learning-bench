@@ -1,0 +1,69 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 02:56:17
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- customers: upgrade a customer to gold (PRC-145)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 02:56:17
+@@ -5,6 +5,7 @@
+ ## customers
+ 
+ - `customers.add_customer(name, tier="standard")`: create a customer
++- `customers.upgrade_tier(customer_id)`: move a standard customer to gold; fails if the customer is missing or already gold
+ - `customers.outstanding_balance(customer_id)`: total of the customer's open invoices
+ 
+ ## shipments
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/customers.py b/parcelo/customers.py
+--- a/parcelo/customers.py	2026-11-10 12:17:53
++++ b/parcelo/customers.py	2026-11-12 02:56:13
+@@ -20,6 +20,16 @@
+     return db.customers[customer_id]
+ 
+ 
++def upgrade_tier(customer_id):
++    customer = db.customers.get(customer_id)
++    if customer is None:
++        raise KeyError(customer_id)
++    if customer.tier == "gold":
++        raise ValueError("customer already gold")
++    customer.tier = "gold"
++    return customer
++
++
+ def outstanding_balance(customer_id):
+     total = 0.0
+     for invoice in db.invoices.values():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_customers.py b/tests/unit/test_customers.py
+--- a/tests/unit/test_customers.py	1969-12-31 19:00:00
++++ b/tests/unit/test_customers.py	2026-11-12 02:56:17
+@@ -0,0 +1,23 @@
++import pytest
++
++from parcelo import customers
++from parcelo.store import db
++
++
++def test_upgrade_standard_to_gold():
++    created = customers.add_customer("Acme")
++    upgraded = customers.upgrade_tier(created.id)
++    assert upgraded is created
++    assert upgraded.tier == "gold"
++    assert db.customers[created.id].tier == "gold"
++
++
++def test_upgrade_missing_customer_fails():
++    with pytest.raises(KeyError):
++        customers.upgrade_tier("C000000")
++
++
++def test_upgrade_already_gold_fails():
++    created = customers.add_customer("Acme", tier="gold")
++    with pytest.raises(ValueError):
++        customers.upgrade_tier(created.id)

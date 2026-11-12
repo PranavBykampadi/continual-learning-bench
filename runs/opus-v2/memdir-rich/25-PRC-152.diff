@@ -1,0 +1,111 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:18:50
+@@ -5,6 +5,7 @@
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
+ - Added gold tier
++- shipments: add mark_lost (PRC-152)
+ 
+ ## 0.4.0
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:18:52
+@@ -11,6 +11,7 @@
+ 
+ - `shipments.create_shipment(customer_id, weight_kg, zone)`: book a shipment
+ - `shipments.get_shipment(shipment_id)`: fetch one shipment
++- `shipments.mark_lost(shipment_id)`: mark a shipment lost in transit
+ 
+ ## rates
+ 
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/shipments.py b/parcelo/shipments.py
+--- a/parcelo/shipments.py	2026-11-10 12:20:18
++++ b/parcelo/shipments.py	2026-11-12 03:18:43
+@@ -28,3 +28,19 @@
+     if shipment_id not in db.shipments:
+         raise DomainError("E_NOT_FOUND", shipment_id)
+     return db.shipments[shipment_id]
++
++
++# Only shipments still in transit can be lost; delivered (and already lost or
++# cancelled) shipments are rejected.
++LOSABLE_STATUSES = ("created",)
++
++
++def mark_lost(shipment_id):
++    """Mark a shipment as lost in transit and return it."""
++    shipment = get_shipment(shipment_id)
++    if shipment.status not in LOSABLE_STATUSES:
++        raise DomainError("E_BAD_STATE", f"{shipment_id} is {shipment.status}")
++    previous_status = shipment.status
++    shipment.status = "lost"
++    events.emit("shipment.lost", shipment.id, previous_status=previous_status)
++    return shipment
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_shipments_lost.py b/tests/unit/test_shipments_lost.py
+--- a/tests/unit/test_shipments_lost.py	1969-12-31 19:00:00
++++ b/tests/unit/test_shipments_lost.py	2026-11-12 03:18:49
+@@ -0,0 +1,62 @@
++import pytest
++
++from parcelo import customers, events, shipments
++from parcelo.errors import DomainError
++
++
++@pytest.fixture
++def shipment():
++    c = customers.add_customer("Acme")
++    s = shipments.create_shipment(c.id, 2.0, "national")
++    events.OUTBOX.clear()
++    return s
++
++
++def test_mark_lost_sets_status_and_returns_shipment(shipment):
++    result = shipments.mark_lost(shipment.id)
++    assert result is shipment
++    assert shipment.id == "shp_000001"
++    assert shipments.get_shipment(shipment.id).status == "lost"
++
++
++def test_mark_lost_emits_event(shipment):
++    shipments.mark_lost(shipment.id)
++    assert len(events.OUTBOX) == 1
++    event = events.OUTBOX[0]
++    assert event["name"] == "shipment.lost"
++    assert event["entity_id"] == shipment.id
++    assert event["payload"] == {"previous_status": "created"}
++
++
++def test_mark_lost_unknown_shipment():
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost("shp_999999")
++    assert err.value.code == "E_NOT_FOUND"
++    assert events.OUTBOX == []
++
++
++def test_mark_lost_delivered_shipment_fails(shipment):
++    shipment.status = "delivered"
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(shipment.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert shipment.status == "delivered"
++    assert events.OUTBOX == []
++
++
++def test_mark_lost_cancelled_shipment_fails(shipment):
++    shipment.status = "cancelled"
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(shipment.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert shipment.status == "cancelled"
++
++
++def test_mark_lost_twice_fails(shipment):
++    shipments.mark_lost(shipment.id)
++    events.OUTBOX.clear()
++    with pytest.raises(DomainError) as err:
++        shipments.mark_lost(shipment.id)
++    assert err.value.code == "E_BAD_STATE"
++    assert shipment.status == "lost"
++    assert events.OUTBOX == []

@@ -1,0 +1,133 @@
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md	2026-11-10 12:20:18
++++ b/CHANGELOG.md	2026-11-12 03:03:50
+@@ -4,6 +4,7 @@
+ 
+ - shipments: validate zone on create (PRC-088)
+ - platform: add events outbox (PRC-140)
++- reports: add per-customer volume report (PRC-147)
+ - Added gold tier
+ 
+ ## 0.4.0
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/docs/api.md b/docs/api.md
+--- a/docs/api.md	2026-11-12 01:26:27
++++ b/docs/api.md	2026-11-12 03:03:50
+@@ -15,3 +15,7 @@
+ ## rates
+ 
+ - `rates.quote(weight_kg, zone)`: price for a weight and zone
++
++## reports
++
++- `reports.volume_report()`: per-customer shipment count and volume tier, keyed by customer id
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/parcelo/reports.py b/parcelo/reports.py
+--- a/parcelo/reports.py	2026-11-10 12:17:53
++++ b/parcelo/reports.py	2026-11-12 03:03:45
+@@ -1,5 +1,6 @@
+ from datetime import datetime
+ 
++from parcelo.legacy.billing import volume_tier
+ from parcelo.store import db
+ 
+ 
+@@ -12,6 +13,21 @@
+     for shipment in db.shipments.values():
+         counts[shipment.zone] = counts.get(shipment.zone, 0) + 1
+     return counts
++
++
++def volume_report():
++    """Shipment count and volume tier for every customer, keyed by customer id.
++
++    Customers with no shipments are included with a count of 0.
++    """
++    counts = {customer_id: 0 for customer_id in db.customers}
++    for shipment in db.shipments.values():
++        if shipment.customer_id in counts:
++            counts[shipment.customer_id] += 1
++    return {
++        customer_id: {"shipments": count, "tier": volume_tier(count)}
++        for customer_id, count in counts.items()
++    }
+ 
+ 
+ def daily_summary():
+diff -ruN -x __pycache__ -x .pytest_cache -x _hidden a/tests/unit/test_volume_report.py b/tests/unit/test_volume_report.py
+--- a/tests/unit/test_volume_report.py	1969-12-31 19:00:00
++++ b/tests/unit/test_volume_report.py	2026-11-12 03:03:48
+@@ -0,0 +1,75 @@
++import pytest
++
++from parcelo import audit, clock, customers, events, ids, shipments, store
++from parcelo.reports import volume_report
++
++
++@pytest.fixture(autouse=True)
++def clean_state():
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++    yield
++    store.reset()
++    ids.reset()
++    audit.LOG.clear()
++    events.OUTBOX.clear()
++    clock.clear_fixed()
++
++
++def add_shipments(customer_id, count):
++    for _ in range(count):
++        shipments.create_shipment(customer_id, 1.0, "local")
++
++
++def test_customer_with_no_shipments_is_included():
++    c = customers.add_customer("Acme")
++    assert volume_report() == {c.id: {"shipments": 0, "tier": "starter"}}
++
++
++def test_counts_shipments_per_customer():
++    a = customers.add_customer("Acme")
++    b = customers.add_customer("Globex")
++    add_shipments(a.id, 3)
++    add_shipments(b.id, 1)
++    report = volume_report()
++    assert report[a.id] == {"shipments": 3, "tier": "starter"}
++    assert report[b.id] == {"shipments": 1, "tier": "starter"}
++
++
++def test_empty_store_returns_empty_dict():
++    assert volume_report() == {}
++
++
++@pytest.mark.parametrize(
++    "count, tier",
++    [
++        (0, "starter"),
++        (9, "starter"),
++        (10, "regular"),
++        (49, "regular"),
++        (50, "bulk"),
++    ],
++)
++def test_tier_thresholds_match_legacy_volume_tier(count, tier):
++    c = customers.add_customer("Acme")
++    add_shipments(c.id, count)
++    assert volume_report()[c.id] == {"shipments": count, "tier": tier}
++
++
++def test_read_only_does_not_modify_state():
++    c = customers.add_customer("Acme")
++    add_shipments(c.id, 2)
++    before_customers = dict(store.db.customers)
++    before_shipments = {k: dict(v.__dict__) for k, v in store.db.shipments.items()}
++    audit_len = len(audit.LOG)
++    outbox_len = len(events.OUTBOX)
++
++    volume_report()
++
++    assert dict(store.db.customers) == before_customers
++    assert {k: dict(v.__dict__) for k, v in store.db.shipments.items()} == before_shipments
++    assert len(audit.LOG) == audit_len
++    assert len(events.OUTBOX) == outbox_len
